@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+.Python
+*.egg-info
+.eggs
+*.egg
+venv
+env
+.env
+
+# Node
+node_modules
+npm-debug.log
+
+# Build outputs
+dist
+build
+*.log
+
+# Downloads and cookies (mounted as volumes)
+downloads
+cookies
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker
+
+# Tests
+tests
+*.test.*
+*.spec.*

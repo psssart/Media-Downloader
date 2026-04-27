@@ -1,0 +1,20 @@
+services:
+  media-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev-stage # Если добавишь стадии, или просто используй текущий
+    container_name: media-downloader-dev
+    ports:
+      - "8000:8000" # Бэкенд напрямую
+      - "5173:5173" # Порт Vite (фронтенд)
+    volumes:
+      - ./backend:/app
+      - ./frontend:/app/frontend
+      - ./downloads:/app/downloads
+      - ./cookies:/app/cookies
+    environment:
+      - MD_DEBUG=true
+      - PYTHONUNBUFFERED=1
+    # Переопределяем команду для запуска в режиме разработки
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

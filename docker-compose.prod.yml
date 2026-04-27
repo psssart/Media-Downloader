@@ -1,0 +1,32 @@
+services:
+  media-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: media-downloader
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    volumes:
+      # Persistent storage for downloads
+      - ./downloads:/app/downloads
+      # Persistent storage for cookies
+      - ./cookies:/app/cookies
+    environment:
+      # File retention in hours (default: 24)
+      - MD_FILE_RETENTION_HOURS=24
+      # Cleanup interval in minutes (default: 30)
+      - MD_CLEANUP_INTERVAL_MINUTES=30
+      # Max concurrent downloads (default: 3)
+      - MD_MAX_CONCURRENT_DOWNLOADS=3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Add network for reverse proxy setup
+networks:
+  default:
+    name: media-downloader-network
