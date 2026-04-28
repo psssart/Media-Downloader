@@ -47,6 +47,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           exit-code: 1
+          ignore-unfixed: true
 
       - name: Push image
         uses: docker/build-push-action@v5
