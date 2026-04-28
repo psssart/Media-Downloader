@@ -64,6 +64,7 @@ class DownloadRequest(BaseModel):
 class DownloadTask(BaseModel):
     """Download task status."""
     task_id: str
+    client_id: str
     url: str
     title: Optional[str] = None
     status: TaskStatus = TaskStatus.PENDING
@@ -83,6 +84,7 @@ class DownloadedFile(BaseModel):
     size: int
     created_at: datetime
     download_url: str
+    thumbnail_url: Optional[str] = None
 
 
 class CookieUpload(BaseModel):
@@ -94,5 +96,5 @@ class CookieUpload(BaseModel):
 class SettingsResponse(BaseModel):
     """Current settings."""
     cookies_configured: bool
-    file_retention_hours: int
+    file_retention_hours: float
     max_concurrent_downloads: int

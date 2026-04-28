@@ -44,7 +44,15 @@ function FileItem({ file, onDelete }) {
   return (
     <div className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700
                     hover:border-slate-600 transition-colors group">
-      <FileIcon className="w-8 h-8 text-slate-400 flex-shrink-0" />
+      {file.thumbnail_url ? (
+        <img
+          src={file.thumbnail_url}
+          alt=""
+          className="w-8 h-8 rounded object-cover flex-shrink-0"
+        />
+      ) : (
+        <FileIcon className="w-8 h-8 text-slate-400 flex-shrink-0" />
+      )}
 
       <div className="flex-1 min-w-0">
         <p className="font-medium truncate" title={file.filename}>

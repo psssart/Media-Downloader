@@ -159,6 +159,7 @@ class YTDLPWrapper:
             "outtmpl": str(output_path / "%(title)s.%(ext)s"),
             "format": format_spec or settings.default_format,
             "merge_output_format": "mp4",
+            "writethumbnail": True,
             "postprocessors": [{
                 "key": "FFmpegVideoConvertor",
                 "preferedformat": "mp4",
@@ -202,6 +203,7 @@ class YTDLPWrapper:
         opts.update({
             "outtmpl": str(output_path / "%(title)s.%(ext)s"),
             "format": "bestaudio/best",
+            "writethumbnail": True,
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",

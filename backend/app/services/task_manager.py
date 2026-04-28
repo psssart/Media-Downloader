@@ -22,12 +22,13 @@ class TaskManager:
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self._lock = asyncio.Lock()
 
-    async def create_task(self, request: DownloadRequest) -> DownloadTask:
+    async def create_task(self, request: DownloadRequest, client_id: str) -> DownloadTask:
         """Create a new download task."""
         task_id = str(uuid.uuid4())[:8]
 
         task = DownloadTask(
             task_id=task_id,
+            client_id=client_id,
             url=str(request.url),
             status=TaskStatus.PENDING,
             created_at=datetime.now(),
@@ -42,15 +43,20 @@ class TaskManager:
             self._process_download,
             task_id,
             request,
+            client_id,
         )
 
         return task
 
-    def _process_download(self, task_id: str, request: DownloadRequest):
+    def _process_download(self, task_id: str, request: DownloadRequest, client_id: str):
         """Process download in background thread."""
         task = self.tasks.get(task_id)
         if not task:
             return
+
+        # Create per-user download directory
+        user_dir = settings.downloads_dir / client_id
+        user_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             # Update status to processing
@@ -87,7 +93,7 @@ class TaskManager:
             if request.audio_only:
                 filepath = ytdlp_wrapper.download_audio(
                     str(request.url),
-                    settings.downloads_dir,
+                    user_dir,
                     progress_hook=progress_hook,
                 )
             else:
@@ -99,7 +105,7 @@ class TaskManager:
 
                 filepath = ytdlp_wrapper.download(
                     str(request.url),
-                    settings.downloads_dir,
+                    user_dir,
                     format_spec=format_spec,
                     progress_hook=progress_hook,
                 )
@@ -117,35 +123,41 @@ class TaskManager:
             task.status = TaskStatus.FAILED
             task.error = str(e)
 
-    async def get_task(self, task_id: str) -> Optional[DownloadTask]:
-        """Get task by ID."""
-        return self.tasks.get(task_id)
+    async def get_task(self, task_id: str, client_id: str) -> Optional[DownloadTask]:
+        """Get task by ID, scoped to client."""
+        task = self.tasks.get(task_id)
+        if task and task.client_id == client_id:
+            return task
+        return None
 
-    async def get_all_tasks(self) -> list[DownloadTask]:
-        """Get all tasks."""
-        return list(self.tasks.values())
+    async def get_all_tasks(self, client_id: str) -> list[DownloadTask]:
+        """Get all tasks for a client."""
+        return [t for t in self.tasks.values() if t.client_id == client_id]
 
-    async def get_active_tasks(self) -> list[DownloadTask]:
-        """Get active (non-completed) tasks."""
+    async def get_active_tasks(self, client_id: str) -> list[DownloadTask]:
+        """Get active (non-completed) tasks for a client."""
         return [
             t for t in self.tasks.values()
-            if t.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED]
+            if t.client_id == client_id
+            and t.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED]
         ]
 
-    async def delete_task(self, task_id: str) -> bool:
-        """Delete a task."""
+    async def delete_task(self, task_id: str, client_id: str) -> bool:
+        """Delete a task, scoped to client."""
         async with self._lock:
-            if task_id in self.tasks:
+            task = self.tasks.get(task_id)
+            if task and task.client_id == client_id:
                 del self.tasks[task_id]
                 return True
         return False
 
-    async def clear_completed(self):
-        """Clear all completed tasks."""
+    async def clear_completed(self, client_id: str):
+        """Clear all completed tasks for a client."""
         async with self._lock:
             self.tasks = {
                 k: v for k, v in self.tasks.items()
-                if v.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED]
+                if not (v.client_id == client_id
+                        and v.status in [TaskStatus.COMPLETED, TaskStatus.FAILED])
             }
 
 

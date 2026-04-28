@@ -54,7 +54,8 @@ function App() {
 
   // Initial load and polling
   useEffect(() => {
-    fetchTasks();
+    // Clear stale completed/failed tasks from previous sessions
+    api.clearCompletedTasks().then(() => fetchTasks());
     fetchFiles();
     fetchSettings();
 

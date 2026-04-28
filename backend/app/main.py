@@ -90,21 +90,19 @@ from pathlib import Path
 
 static_path = Path("static")
 
-# Проверяем, существует ли папка со сборкой фронтенда (создается в Docker)
+# Check if the frontend build directory exists (created in Docker)
 if static_path.exists():
-    # Раздаем папку assets (картинки, стили, скрипты)
+    # Serve assets directory (images, styles, scripts)
     app.mount("/assets", StaticFiles(directory=str(static_path / "assets")), name="assets")
 
-
-    # Catch-all route для SPA (React/Vue)
-    # Если пользователь введет любой путь, не относящийся к API,
-    # мы отдаем ему index.html, а дальше разберется React Router.
+    # Catch-all route for SPA (React)
+    # Any non-API path serves index.html and lets React Router handle it.
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        # Если это запрос файла (напр. favicon.ico), и он есть — отдаем его
+        # If a specific file is requested (e.g. favicon.ico) and exists, serve it
         file_path = static_path / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
 
-        # В остальных случаях отдаем главную страницу фронтенда
+        # Otherwise serve the frontend entry point
         return FileResponse(static_path / "index.html")

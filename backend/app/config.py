@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     downloads_dir: Path = Path("/app/downloads")
     cookies_dir: Path = Path("/app/cookies")
 
-    # Cleanup settings (in hours)
-    file_retention_hours: int = 24
-    cleanup_interval_minutes: int = 30
+    # Cleanup settings
+    file_retention_hours: float = 0.5  # 30 minutes
+    cleanup_interval_minutes: int = 10
 
     # Download settings
     max_concurrent_downloads: int = 3

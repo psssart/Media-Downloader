@@ -13,10 +13,10 @@ services:
       # Persistent storage for cookies
       - ./cookies:/app/cookies
     environment:
-      # File retention in hours (default: 24)
-      - MD_FILE_RETENTION_HOURS=24
-      # Cleanup interval in minutes (default: 30)
-      - MD_CLEANUP_INTERVAL_MINUTES=30
+      # File retention in hours (0.5 = 30 minutes)
+      - MD_FILE_RETENTION_HOURS=0.5
+      # Cleanup interval in minutes
+      - MD_CLEANUP_INTERVAL_MINUTES=10
       # Max concurrent downloads (default: 3)
       - MD_MAX_CONCURRENT_DOWNLOADS=3
     healthcheck:

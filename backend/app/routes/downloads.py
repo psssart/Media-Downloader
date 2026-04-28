@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from typing import List
 
@@ -9,6 +9,7 @@ from ..models import (
     DownloadTask,
     DownloadedFile,
 )
+from ..dependencies import get_client_id
 from ..services.ytdlp_wrapper import ytdlp_wrapper
 from ..services.task_manager import task_manager
 from ..services.file_manager import file_manager
@@ -29,56 +30,72 @@ async def extract_info(request: URLRequest):
 
 
 @router.post("/start", response_model=DownloadTask)
-async def start_download(request: DownloadRequest):
+async def start_download(request: DownloadRequest, client_id: str = Depends(get_client_id)):
     """Start a new download task."""
     try:
-        task = await task_manager.create_task(request)
+        task = await task_manager.create_task(request, client_id)
         return task
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start download: {str(e)}")
 
 
 @router.get("/tasks", response_model=List[DownloadTask])
-async def get_tasks():
-    """Get all download tasks."""
-    return await task_manager.get_all_tasks()
+async def get_tasks(client_id: str = Depends(get_client_id)):
+    """Get all download tasks for the current client."""
+    return await task_manager.get_all_tasks(client_id)
 
 
 @router.get("/tasks/{task_id}", response_model=DownloadTask)
-async def get_task(task_id: str):
+async def get_task(task_id: str, client_id: str = Depends(get_client_id)):
     """Get a specific task by ID."""
-    task = await task_manager.get_task(task_id)
+    task = await task_manager.get_task(task_id, client_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str):
+async def delete_task(task_id: str, client_id: str = Depends(get_client_id)):
     """Delete a task."""
-    success = await task_manager.delete_task(task_id)
+    success = await task_manager.delete_task(task_id, client_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"message": "Task deleted"}
 
 
 @router.delete("/tasks")
-async def clear_completed_tasks():
-    """Clear all completed tasks."""
-    await task_manager.clear_completed()
+async def clear_completed_tasks(client_id: str = Depends(get_client_id)):
+    """Clear all completed tasks for the current client."""
+    await task_manager.clear_completed(client_id)
     return {"message": "Completed tasks cleared"}
 
 
 @router.get("/files", response_model=List[DownloadedFile])
-async def get_files():
-    """Get list of downloaded files."""
-    return file_manager.get_files()
+async def get_files(client_id: str = Depends(get_client_id)):
+    """Get list of downloaded files for the current client."""
+    return file_manager.get_files(client_id)
+
+
+@router.get("/thumbnails/{filename}")
+async def get_thumbnail(filename: str, client_id: str = Depends(get_client_id)):
+    """Serve a thumbnail image."""
+    filepath = file_manager.get_thumbnail_path(filename, client_id)
+    if not filepath:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+    import mimetypes
+    media_type = mimetypes.guess_type(str(filepath))[0] or "image/jpeg"
+
+    return FileResponse(
+        path=filepath,
+        media_type=media_type,
+    )
 
 
 @router.get("/files/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, client_id: str = Depends(get_client_id)):
     """Download a file."""
-    filepath = file_manager.get_file_path(filename)
+    filepath = file_manager.get_file_path(filename, client_id)
     if not filepath:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -90,15 +107,15 @@ async def download_file(filename: str):
 
 
 @router.delete("/files/{filename}")
-async def delete_file(filename: str):
+async def delete_file(filename: str, client_id: str = Depends(get_client_id)):
     """Delete a file."""
-    success = file_manager.delete_file(filename)
+    success = file_manager.delete_file(filename, client_id)
     if not success:
         raise HTTPException(status_code=404, detail="File not found")
     return {"message": "File deleted"}
 
 
 @router.get("/stats")
-async def get_stats():
-    """Get storage statistics."""
-    return file_manager.get_storage_stats()
+async def get_stats(client_id: str = Depends(get_client_id)):
+    """Get storage statistics for the current client."""
+    return file_manager.get_storage_stats(client_id)

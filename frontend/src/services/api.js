@@ -1,11 +1,40 @@
 const API_BASE = '/api';
 
+const STORAGE_KEY = 'md_client_id';
+const COOKIE_NAME = 'md_client_id';
+
+function getClientId() {
+  // Try localStorage first
+  let clientId = localStorage.getItem(STORAGE_KEY);
+
+  // Fallback to cookie if localStorage was cleared
+  if (!clientId) {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${COOKIE_NAME}=([^;]+)`));
+    if (match) {
+      clientId = match[1];
+      localStorage.setItem(STORAGE_KEY, clientId);
+    }
+  }
+
+  // Generate new if neither exists
+  if (!clientId) {
+    clientId = crypto.randomUUID();
+    localStorage.setItem(STORAGE_KEY, clientId);
+  }
+
+  // Always refresh the cookie (1-year expiry)
+  document.cookie = `${COOKIE_NAME}=${clientId}; path=/; max-age=31536000; SameSite=Strict`;
+
+  return clientId;
+}
+
 class ApiService {
   async request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const config = {
       headers: {
         'Content-Type': 'application/json',
+        'X-Client-ID': getClientId(),
         ...options.headers,
       },
       ...options,
@@ -72,7 +101,11 @@ class ApiService {
   }
 
   getDownloadUrl(filename) {
-    return `${API_BASE}/downloads/files/${encodeURIComponent(filename)}`;
+    return `${API_BASE}/downloads/files/${encodeURIComponent(filename)}?client_id=${getClientId()}`;
+  }
+
+  getThumbnailUrl(filename) {
+    return `${API_BASE}/downloads/thumbnails/${encodeURIComponent(filename)}?client_id=${getClientId()}`;
   }
 
   async getStats() {
@@ -94,6 +127,9 @@ class ApiService {
 
     const response = await fetch(`${API_BASE}/settings/cookies/upload`, {
       method: 'POST',
+      headers: {
+        'X-Client-ID': getClientId(),
+      },
       body: formData,
     });
 
@@ -130,5 +166,6 @@ class ApiService {
   }
 }
 
+export { getClientId };
 export const api = new ApiService();
 export default api;

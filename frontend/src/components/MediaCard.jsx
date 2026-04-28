@@ -43,10 +43,10 @@ export default function MediaCard({ media, onDownload, downloading }) {
 
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
-      <div className="md:flex">
+      <div className="md:flex items-center">
         {/* Thumbnail */}
         <div className="md:w-80 md:flex-shrink-0">
-          <div className="relative aspect-video md:h-full">
+          <div className="relative aspect-video">
             {media.thumbnail ? (
               <img
                 src={media.thumbnail}
