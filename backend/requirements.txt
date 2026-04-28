@@ -6,5 +6,3 @@ pydantic
 pydantic-settings
 aiofiles
 apscheduler
-jaraco-context>=6.1.0
-wheel>=0.46.2

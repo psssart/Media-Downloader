@@ -6,7 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir --upgrade "jaraco-context>=6.1.0" "wheel>=0.46.2"
 
 # --- STAGE 2: Frontend build (production only) ---
 FROM node:20-alpine AS frontend-builder
