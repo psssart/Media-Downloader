@@ -1,3 +1,5 @@
+import re
+
 import yt_dlp
 from typing import Optional, Dict, Any, Callable
 from pathlib import Path
@@ -7,6 +9,12 @@ from ..config import settings
 from ..models import MediaInfo, FormatInfo
 
 logger = logging.getLogger(__name__)
+
+# Sites that typically require cookies for extraction
+_COOKIE_REQUIRED_PATTERNS = [
+    (r'facebook\.com|fb\.watch', 'Facebook'),
+    (r'instagram\.com', 'Instagram'),
+]
 
 
 class YTDLPWrapper:
@@ -27,12 +35,28 @@ class YTDLPWrapper:
         if self.cookies_file.exists():
             opts["cookiefile"] = str(self.cookies_file)
 
+        # Impersonate a browser to bypass TLS fingerprint checks
+        # (needed for Facebook, Instagram, and other sites that block non-browser requests)
+        try:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+            opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+        except (ImportError, Exception):
+            pass
+
         return opts
+
+    def _needs_cookies(self, url: str) -> Optional[str]:
+        """Check if URL is from a site that typically requires cookies."""
+        for pattern, name in _COOKIE_REQUIRED_PATTERNS:
+            if re.search(pattern, url):
+                return name
+        return None
 
     def extract_info(self, url: str) -> MediaInfo:
         """Extract media information from URL."""
         opts = self._get_base_opts()
         opts["extract_flat"] = False
+        has_cookies = "cookiefile" in opts
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             try:
@@ -45,6 +69,13 @@ class YTDLPWrapper:
 
             except yt_dlp.utils.DownloadError as e:
                 logger.error(f"Failed to extract info: {e}")
+                site_name = self._needs_cookies(url)
+                if site_name and not has_cookies:
+                    raise ValueError(
+                        f"{site_name} requires cookies to download this content. "
+                        f"Please go to Settings and upload a cookies.txt file from a "
+                        f"browser where you are logged into {site_name}."
+                    )
                 raise ValueError(f"Failed to extract info: {str(e)}")
 
     def _parse_info(self, info: Dict[str, Any]) -> MediaInfo:
@@ -102,7 +133,7 @@ class YTDLPWrapper:
             title=info.get("title", "Unknown"),
             description=info.get("description"),
             thumbnail=info.get("thumbnail"),
-            duration=info.get("duration"),
+            duration=int(info["duration"]) if info.get("duration") is not None else None,
             uploader=info.get("uploader"),
             upload_date=info.get("upload_date"),
             view_count=info.get("view_count"),
