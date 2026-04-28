@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import FileResponse, Response
 from typing import List
+import urllib.request
+import logging
 
 from ..models import (
     URLRequest,
@@ -13,6 +15,8 @@ from ..dependencies import get_client_id
 from ..services.ytdlp_wrapper import ytdlp_wrapper
 from ..services.task_manager import task_manager
 from ..services.file_manager import file_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 
@@ -74,6 +78,31 @@ async def clear_completed_tasks(client_id: str = Depends(get_client_id)):
 async def get_files(client_id: str = Depends(get_client_id)):
     """Get list of downloaded files for the current client."""
     return file_manager.get_files(client_id)
+
+
+@router.get("/proxy-thumbnail")
+async def proxy_thumbnail(url: str = Query(..., description="External thumbnail URL")):
+    """Proxy an external thumbnail image to bypass referrer restrictions."""
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/*,*/*;q=0.8",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content_type = resp.headers.get("Content-Type", "image/jpeg")
+            data = resp.read(5 * 1024 * 1024)  # 5MB limit
+
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to proxy thumbnail: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch thumbnail")
 
 
 @router.get("/thumbnails/{filename}")

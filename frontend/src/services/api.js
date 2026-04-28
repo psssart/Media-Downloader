@@ -108,6 +108,10 @@ class ApiService {
     return `${API_BASE}/downloads/thumbnails/${encodeURIComponent(filename)}?client_id=${getClientId()}`;
   }
 
+  getProxyThumbnailUrl(url) {
+    return `${API_BASE}/downloads/proxy-thumbnail?url=${encodeURIComponent(url)}`;
+  }
+
   async getStats() {
     return this.request('/downloads/stats');
   }
