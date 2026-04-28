@@ -1,8 +1,6 @@
 services:
   media-downloader:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: pasubi/media-downloader:latest
     container_name: media-downloader
     restart: unless-stopped
     ports:
