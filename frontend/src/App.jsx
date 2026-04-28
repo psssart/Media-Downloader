@@ -189,7 +189,7 @@ function App() {
         {/* Tasks and files grid */}
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Tasks */}
-          <section className="bg-slate-800/50 rounded-xl p-6 border border-slate-700">
+          <section className="bg-slate-800/50 rounded-xl p-6 border border-slate-700 min-w-0">
             <TaskList
               tasks={tasks}
               onDelete={handleDeleteTask}
@@ -206,7 +206,7 @@ function App() {
           </section>
 
           {/* Files */}
-          <section className="bg-slate-800/50 rounded-xl p-6 border border-slate-700">
+          <section className="bg-slate-800/50 rounded-xl p-6 border border-slate-700 min-w-0">
             <FileList
               files={files}
               stats={stats}
