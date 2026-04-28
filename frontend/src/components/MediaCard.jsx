@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, Music, Video, Clock, User, Eye, Loader2 } from 'lucide-react';
+import { Download, Music, Video, Clock, User, Eye, Loader2, Play } from 'lucide-react';
 
 const QUALITY_OPTIONS = [
   { value: 'best', label: 'Best Available' },
@@ -29,9 +29,27 @@ function formatViews(count) {
   return `${count} views`;
 }
 
+function getEmbedUrl(media) {
+  const extractor = (media.extractor || '').toLowerCase();
+
+  if (extractor.includes('youtube')) {
+    return `https://www.youtube.com/embed/${media.id}?autoplay=1&rel=0`;
+  }
+  if (extractor.includes('vimeo')) {
+    return `https://player.vimeo.com/video/${media.id}?autoplay=1`;
+  }
+  if (extractor.includes('dailymotion')) {
+    return `https://www.dailymotion.com/embed/video/${media.id}?autoplay=1`;
+  }
+
+  // Fallback: embed the original page in an iframe
+  return media.webpage_url;
+}
+
 export default function MediaCard({ media, onDownload, downloading }) {
   const [quality, setQuality] = useState('best');
   const [audioOnly, setAudioOnly] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
   const handleDownload = () => {
     onDownload({
@@ -44,24 +62,49 @@ export default function MediaCard({ media, onDownload, downloading }) {
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
       <div className="md:flex items-center">
-        {/* Thumbnail */}
+        {/* Thumbnail / Video Preview */}
         <div className="md:w-80 md:flex-shrink-0">
-          <div className="relative aspect-video">
-            {media.thumbnail ? (
-              <img
-                src={media.thumbnail}
-                alt={media.title}
-                className="w-full h-full object-cover"
+          <div className="relative aspect-video bg-black">
+            {playing ? (
+              <iframe
+                src={getEmbedUrl(media)}
+                className="absolute inset-0 w-full h-full"
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                frameBorder="0"
               />
             ) : (
-              <div className="w-full h-full bg-slate-700 flex items-center justify-center">
-                <Video className="w-16 h-16 text-slate-600" />
-              </div>
-            )}
-            {media.duration && (
-              <span className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-sm font-medium">
-                {formatDuration(media.duration)}
-              </span>
+              <>
+                {media.thumbnail ? (
+                  <img
+                    src={media.thumbnail}
+                    alt={media.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-slate-700 flex items-center justify-center">
+                    <Video className="w-16 h-16 text-slate-600" />
+                  </div>
+                )}
+                {/* Play button overlay */}
+                <button
+                  onClick={() => setPlaying(true)}
+                  className="absolute inset-0 flex items-center justify-center group cursor-pointer"
+                  aria-label="Play preview"
+                >
+                  <div className="w-14 h-14 rounded-full bg-black/50 backdrop-blur-sm
+                                  border-2 border-white/20 flex items-center justify-center
+                                  group-hover:bg-primary-600/80 group-hover:border-primary-400/40
+                                  group-hover:scale-110 transition-all duration-200 shadow-lg">
+                    <Play className="w-6 h-6 text-white fill-white ml-0.5" />
+                  </div>
+                </button>
+                {media.duration && (
+                  <span className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-sm font-medium">
+                    {formatDuration(media.duration)}
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
