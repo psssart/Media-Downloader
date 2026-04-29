@@ -30,6 +30,80 @@ function formatViews(count) {
   return `${count} views`;
 }
 
+function formatFileSize(bytes) {
+  if (!bytes || bytes <= 0) return null;
+  if (bytes >= 1073741824) return `~${(bytes / 1073741824).toFixed(1)} GB`;
+  if (bytes >= 1048576) return `~${(bytes / 1048576).toFixed(0)} MB`;
+  if (bytes >= 1024) return `~${(bytes / 1024).toFixed(0)} KB`;
+  return `~${bytes} B`;
+}
+
+function getFormatHeight(format) {
+  if (!format.resolution) return null;
+  // resolution is "WxH" or "Hp"
+  const match = format.resolution.match(/(\d+)p/) || format.resolution.match(/\d+x(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function getFormatSize(format) {
+  return format.filesize ?? format.filesize_approx ?? null;
+}
+
+function estimateFileSize(formats, quality, audioOnly) {
+  if (!formats || formats.length === 0) return null;
+
+  const audioFormats = formats.filter(f => f.has_audio && !f.has_video);
+  const videoFormats = formats.filter(f => f.has_video);
+
+  // Best audio-only format (highest abr)
+  const bestAudio = audioFormats.length > 0
+    ? audioFormats.reduce((best, f) => (f.abr || 0) > (best.abr || 0) ? f : best)
+    : null;
+
+  if (audioOnly) {
+    if (!bestAudio) return null;
+    return getFormatSize(bestAudio);
+  }
+
+  // Find the appropriate video format
+  let videoFormat = null;
+
+  if (quality === 'best') {
+    // Largest video format by size, falling back to highest resolution
+    const withSize = videoFormats.filter(f => getFormatSize(f));
+    if (withSize.length > 0) {
+      videoFormat = withSize.reduce((best, f) => getFormatSize(f) > getFormatSize(best) ? f : best);
+    } else if (videoFormats.length > 0) {
+      videoFormat = videoFormats.reduce((best, f) => (getFormatHeight(f) || 0) > (getFormatHeight(best) || 0) ? f : best);
+    }
+  } else {
+    // Quality like "1080p", "720p", "4k" etc.
+    const maxHeight = quality === '4k' ? 2160 : parseInt(quality, 10);
+    if (!maxHeight) return null;
+
+    // Filter to video-only formats at or below the target height, pick the best one
+    const eligible = videoFormats.filter(f => {
+      const h = getFormatHeight(f);
+      return h && h <= maxHeight;
+    });
+
+    if (eligible.length > 0) {
+      videoFormat = eligible.reduce((best, f) => (getFormatHeight(f) || 0) > (getFormatHeight(best) || 0) ? f : best);
+    }
+  }
+
+  if (!videoFormat) return null;
+
+  const videoSize = getFormatSize(videoFormat);
+  if (!videoSize) return null;
+
+  // If the video format already includes audio, don't add audio size
+  if (videoFormat.has_audio) return videoSize;
+
+  const audioSize = bestAudio ? getFormatSize(bestAudio) : null;
+  return audioSize ? videoSize + audioSize : videoSize;
+}
+
 function getEmbedUrl(media) {
   const extractor = (media.extractor || '').toLowerCase();
 
@@ -59,6 +133,8 @@ export default function MediaCard({ media, onDownload, downloading }) {
       audioOnly,
     });
   };
+
+  const estimatedSize = formatFileSize(estimateFileSize(media.formats, quality, audioOnly));
 
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
@@ -198,28 +274,33 @@ export default function MediaCard({ media, onDownload, downloading }) {
                            text-primary-600 focus:ring-primary-500"
               />
               <Music className="w-4 h-4" />
-              <span className="text-sm">Audio Only (MP3)</span>
+              <span className="text-sm">Audio Only</span>
             </label>
 
-            <button
-              onClick={handleDownload}
-              disabled={downloading}
-              className="ml-auto px-6 py-2 bg-primary-600 hover:bg-primary-700
-                         disabled:bg-slate-700 disabled:cursor-not-allowed
-                         rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              {downloading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Starting...
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4" />
-                  Download
-                </>
+            <div className="ml-auto flex items-center gap-3">
+              {estimatedSize && (
+                <span className="text-xs text-slate-500">{estimatedSize}</span>
               )}
-            </button>
+              <button
+                onClick={handleDownload}
+                disabled={downloading}
+                className="px-6 py-2 bg-primary-600 hover:bg-primary-700
+                           disabled:bg-slate-700 disabled:cursor-not-allowed
+                           rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Download
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
