@@ -1,4 +1,4 @@
-import { Download, Trash2, FileVideo, FileAudio, File, HardDrive } from 'lucide-react';
+import { Download, Trash2, FileVideo, FileAudio, FileImage, File, HardDrive } from 'lucide-react';
 import api from '../services/api';
 
 function formatFileSize(bytes) {
@@ -25,6 +25,9 @@ function getFileIcon(filename) {
   }
   if (['mp3', 'wav', 'flac', 'm4a', 'ogg'].includes(ext)) {
     return FileAudio;
+  }
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) {
+    return FileImage;
   }
   return File;
 }

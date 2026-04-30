@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 yt-dlp
 curl_cffi>=0.10,<0.15
+instaloader
 python-multipart
 pydantic
 pydantic-settings

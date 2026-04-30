@@ -94,6 +94,9 @@ function App() {
       await api.startDownload(options.url, {
         quality: options.quality,
         audioOnly: options.audioOnly,
+        mediaType: options.mediaType || 'video',
+        sourceUrl: options.sourceUrl,
+        title: options.title,
       });
       fetchTasks();
     } catch (err) {
@@ -158,7 +161,7 @@ function App() {
         {/* Search section */}
         <section className="text-center space-y-6">
           <div>
-            <h2 className="text-3xl font-bold mb-2">Download Videos & Audio</h2>
+            <h2 className="text-3xl font-bold mb-2">Download Videos, Audio & Photos</h2>
             <p className="text-slate-400">
               Paste a URL from YouTube, Instagram, TikTok, and 1000+ other sites
             </p>

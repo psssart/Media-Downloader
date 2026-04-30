@@ -66,6 +66,9 @@ class ApiService {
         quality: options.quality || 'best',
         format_id: options.formatId,
         audio_only: options.audioOnly || false,
+        media_type: options.mediaType || 'video',
+        source_url: options.sourceUrl || null,
+        title: options.title || null,
       }),
     });
   }

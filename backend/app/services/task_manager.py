@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -62,12 +63,16 @@ class TaskManager:
             # Update status to processing
             task.status = TaskStatus.PROCESSING
 
-            # First extract info to get title
-            try:
-                info = ytdlp_wrapper.extract_info(str(request.url))
-                task.title = info.title
-            except Exception as e:
-                logger.warning(f"Could not extract title: {e}")
+            # Use title from request if provided (e.g. carousel entries),
+            # otherwise extract it
+            if request.title:
+                task.title = request.title
+            else:
+                try:
+                    info = ytdlp_wrapper.extract_info(str(request.url))
+                    task.title = info.title
+                except Exception as e:
+                    logger.warning(f"Could not extract title: {e}")
 
             # Update status to downloading
             task.status = TaskStatus.DOWNLOADING
@@ -90,10 +95,27 @@ class TaskManager:
                     task.progress = 100
 
             # Determine format
-            if request.audio_only:
+            if request.media_type == "image":
+                filepath = ytdlp_wrapper.download_image(
+                    str(request.url),
+                    user_dir,
+                    source_url=request.source_url,
+                    title=task.title,
+                    progress_hook=progress_hook,
+                )
+            elif request.audio_only:
                 filepath = ytdlp_wrapper.download_audio(
                     str(request.url),
                     user_dir,
+                    progress_hook=progress_hook,
+                )
+            elif request.source_url and re.search(r'instagram\.com', str(request.url)):
+                # Instagram video with direct CDN URL from instaloader
+                filepath = ytdlp_wrapper.download_instagram_video(
+                    str(request.url),
+                    user_dir,
+                    source_url=request.source_url,
+                    title=task.title,
                     progress_hook=progress_hook,
                 )
             else:

@@ -46,6 +46,9 @@ class MediaInfo(BaseModel):
     formats: List[FormatInfo] = []
     best_video_format: Optional[FormatInfo] = None
     best_audio_format: Optional[FormatInfo] = None
+    media_type: str = "video"
+    source_url: Optional[str] = None
+    entries: List["MediaInfo"] = []
 
 
 class URLRequest(BaseModel):
@@ -59,6 +62,9 @@ class DownloadRequest(BaseModel):
     format_id: Optional[str] = None
     quality: Optional[str] = "best"  # best, 1080p, 720p, 480p, audio_only
     audio_only: bool = False
+    media_type: str = "video"
+    source_url: Optional[str] = None
+    title: Optional[str] = None
 
 
 class DownloadTask(BaseModel):

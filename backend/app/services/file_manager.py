@@ -12,6 +12,7 @@ from ..models import DownloadedFile
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+MEDIA_EXTENSIONS = {".mp4", ".webm", ".mkv", ".avi", ".mov", ".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 
 
 class FileManager:
@@ -25,15 +26,25 @@ class FileManager:
         return self.downloads_dir / client_id
 
     def _is_thumbnail(self, filepath: Path) -> bool:
-        """Check if a file is a thumbnail image."""
-        return filepath.suffix.lower() in IMAGE_EXTENSIONS
+        """Check if a file is a thumbnail image (not a standalone photo).
+
+        An image file is a thumbnail only if a companion media file
+        with the same stem exists in the same directory.
+        """
+        if filepath.suffix.lower() not in IMAGE_EXTENSIONS:
+            return False
+        # Check if a companion media file exists with the same stem
+        for ext in MEDIA_EXTENSIONS:
+            companion = filepath.with_suffix(ext)
+            if companion.exists():
+                return True
+        return False
 
     def _find_thumbnail(self, filepath: Path, client_id: str) -> Optional[str]:
         """Find a matching thumbnail for a media file."""
-        stem = filepath.stem
         for ext in IMAGE_EXTENSIONS:
             thumb_path = filepath.with_suffix(ext)
-            if thumb_path.exists():
+            if thumb_path.exists() and thumb_path != filepath:
                 return f"/api/downloads/thumbnails/{quote(thumb_path.name)}?client_id={client_id}"
         return None
 
@@ -108,7 +119,7 @@ class FileManager:
                 # Also delete associated thumbnail
                 for ext in IMAGE_EXTENSIONS:
                     thumb = filepath.with_suffix(ext)
-                    if thumb.exists():
+                    if thumb.exists() and thumb != filepath:
                         thumb.unlink()
                         logger.info(f"Deleted thumbnail: {thumb.name}")
 

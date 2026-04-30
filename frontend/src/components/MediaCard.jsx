@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, Music, Video, Clock, User, Eye, Loader2, Play, ExternalLink } from 'lucide-react';
+import { Download, Music, Video, Image, Clock, User, Eye, Loader2, Play, ExternalLink, CheckSquare, Square } from 'lucide-react';
 import api from '../services/api';
 
 const QUALITY_OPTIONS = [
@@ -121,7 +121,292 @@ function getEmbedUrl(media) {
   return null;
 }
 
+// Carousel/gallery view for multi-entry posts
+function GalleryView({ media, onDownload, downloading }) {
+  const entries = media.entries || [];
+  const [selected, setSelected] = useState(() => new Set(entries.map((_, i) => i)));
+  const [quality, setQuality] = useState('best');
+
+  const hasVideos = entries.some(e => e.media_type !== 'image');
+  const allSelected = selected.size === entries.length;
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(entries.map((_, i) => i)));
+    }
+  };
+
+  const toggleEntry = (index) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const handleDownloadSelected = () => {
+    for (const index of selected) {
+      const entry = entries[index];
+      onDownload({
+        url: entry.webpage_url,
+        quality: entry.media_type === 'image' ? 'best' : quality,
+        audioOnly: false,
+        mediaType: entry.media_type,
+        sourceUrl: entry.source_url,
+        title: entry.title,
+      });
+    }
+  };
+
+  return (
+    <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
+      {/* Header info */}
+      <div className="p-6 pb-4">
+        <h2 className="text-xl font-semibold mb-2 line-clamp-2">{media.title}</h2>
+        <div className="flex flex-wrap gap-4 text-sm text-slate-400 mb-2">
+          {media.uploader && (
+            <span className="flex items-center gap-1">
+              <User className="w-4 h-4" />
+              {media.uploader}
+            </span>
+          )}
+          <span className="flex items-center gap-1 text-primary-400">
+            {media.extractor}
+          </span>
+          <span className="px-2 py-0.5 bg-purple-900/50 text-purple-400 rounded text-xs">
+            {entries.length} items
+          </span>
+        </div>
+        {media.description && (
+          <p className="text-slate-400 text-sm line-clamp-2">{media.description}</p>
+        )}
+      </div>
+
+      {/* Gallery grid */}
+      <div className="px-6 pb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-80 overflow-y-auto pr-1">
+          {entries.map((entry, index) => (
+            <button
+              key={entry.id || index}
+              onClick={() => toggleEntry(index)}
+              className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all cursor-pointer
+                ${selected.has(index)
+                  ? 'border-primary-500 ring-2 ring-primary-500/30'
+                  : 'border-slate-600 hover:border-slate-500'
+                }`}
+            >
+              {entry.thumbnail ? (
+                <img
+                  src={api.getProxyThumbnailUrl(entry.thumbnail)}
+                  alt={entry.title}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-slate-700 flex items-center justify-center">
+                  {entry.media_type === 'image' ? (
+                    <Image className="w-8 h-8 text-slate-500" />
+                  ) : (
+                    <Video className="w-8 h-8 text-slate-500" />
+                  )}
+                </div>
+              )}
+
+              {/* Checkbox overlay */}
+              <div className="absolute top-2 left-2">
+                {selected.has(index) ? (
+                  <CheckSquare className="w-5 h-5 text-primary-400 drop-shadow-lg" />
+                ) : (
+                  <Square className="w-5 h-5 text-white/70 drop-shadow-lg" />
+                )}
+              </div>
+
+              {/* Media type indicator */}
+              <div className="absolute bottom-1 right-1">
+                {entry.media_type === 'image' ? (
+                  <span className="px-1.5 py-0.5 bg-black/70 rounded text-xs text-emerald-400">
+                    Photo
+                  </span>
+                ) : entry.duration ? (
+                  <span className="px-1.5 py-0.5 bg-black/70 rounded text-xs">
+                    {formatDuration(entry.duration)}
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 bg-black/70 rounded text-xs text-blue-400">
+                    Video
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="px-6 pb-6 flex flex-wrap items-center gap-4 border-t border-slate-700 pt-4">
+        <button
+          onClick={toggleAll}
+          className="text-sm text-slate-400 hover:text-white transition-colors"
+        >
+          {allSelected ? 'Deselect All' : 'Select All'}
+        </button>
+
+        {hasVideos && (
+          <select
+            value={quality}
+            onChange={(e) => setQuality(e.target.value)}
+            disabled={downloading}
+            className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm
+                       focus:outline-none focus:ring-2 focus:ring-primary-500
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {QUALITY_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="ml-auto">
+          <button
+            onClick={handleDownloadSelected}
+            disabled={downloading || selected.size === 0}
+            className="px-6 py-2 bg-primary-600 hover:bg-primary-700
+                       disabled:bg-slate-700 disabled:cursor-not-allowed
+                       rounded-lg font-medium transition-colors flex items-center gap-2"
+          >
+            {downloading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Starting...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Download Selected ({selected.size})
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Single image view
+function ImageCard({ media, onDownload, downloading }) {
+  const handleDownload = () => {
+    onDownload({
+      url: media.webpage_url,
+      quality: 'best',
+      audioOnly: false,
+      mediaType: 'image',
+      sourceUrl: media.source_url,
+      title: media.title,
+    });
+  };
+
+  return (
+    <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
+      <div className="md:flex items-center">
+        {/* Image preview */}
+        <div className="md:w-80 md:flex-shrink-0">
+          <div className="relative aspect-square bg-black">
+            {media.thumbnail ? (
+              <img
+                src={api.getProxyThumbnailUrl(media.thumbnail)}
+                alt={media.title}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full bg-slate-700 flex items-center justify-center">
+                <Image className="w-16 h-16 text-slate-600" />
+              </div>
+            )}
+            <span className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-sm font-medium text-emerald-400">
+              Photo
+            </span>
+          </div>
+        </div>
+
+        {/* Info */}
+        <div className="p-6 flex-1 flex flex-col">
+          <h2 className="text-xl font-semibold mb-2 line-clamp-2">{media.title}</h2>
+
+          <div className="flex flex-wrap gap-4 text-sm text-slate-400 mb-4">
+            {media.uploader && (
+              <span className="flex items-center gap-1">
+                <User className="w-4 h-4" />
+                {media.uploader}
+              </span>
+            )}
+            {media.view_count && (
+              <span className="flex items-center gap-1">
+                <Eye className="w-4 h-4" />
+                {formatViews(media.view_count)}
+              </span>
+            )}
+            <span className="flex items-center gap-1 text-primary-400">
+              {media.extractor}
+            </span>
+          </div>
+
+          {media.description && (
+            <p className="text-slate-400 text-sm mb-4 line-clamp-2">
+              {media.description}
+            </p>
+          )}
+
+          {/* Download button only (no quality/audio controls for images) */}
+          <div className="mt-auto flex justify-end">
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              className="px-6 py-2 bg-primary-600 hover:bg-primary-700
+                         disabled:bg-slate-700 disabled:cursor-not-allowed
+                         rounded-lg font-medium transition-colors flex items-center gap-2"
+            >
+              {downloading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Download Photo
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MediaCard({ media, onDownload, downloading }) {
+  // Carousel/playlist with multiple entries
+  if (media.entries && media.entries.length > 0) {
+    return <GalleryView media={media} onDownload={onDownload} downloading={downloading} />;
+  }
+
+  // Single image
+  if (media.media_type === 'image') {
+    return <ImageCard media={media} onDownload={onDownload} downloading={downloading} />;
+  }
+
+  // Single video (existing behavior)
+  return <VideoCard media={media} onDownload={onDownload} downloading={downloading} />;
+}
+
+function VideoCard({ media, onDownload, downloading }) {
   const [quality, setQuality] = useState('best');
   const [audioOnly, setAudioOnly] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -131,6 +416,7 @@ export default function MediaCard({ media, onDownload, downloading }) {
       url: media.webpage_url,
       quality: audioOnly ? 'audio_only' : quality,
       audioOnly,
+      mediaType: 'video',
     });
   };
 
