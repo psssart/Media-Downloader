@@ -225,7 +225,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onSettingsCha
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer. */}
         <div className="p-4 border-t border-slate-700 flex justify-end">
           <button
             onClick={onClose}
