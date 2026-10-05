@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -99,6 +99,10 @@ if static_path.exists():
     # Any non-API path serves index.html and lets React Router handle it.
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        # Unknown API paths must fail as JSON, not silently return index.html
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
         # If a specific file is requested (e.g. favicon.ico) and exists, serve it
         file_path = static_path / full_path
         if file_path.exists() and file_path.is_file():

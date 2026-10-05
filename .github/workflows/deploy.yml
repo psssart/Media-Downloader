@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+    # Only changes that end up in the image trigger a deploy
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
+  # Manual run from the Actions tab
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: pasubi/media-downloader

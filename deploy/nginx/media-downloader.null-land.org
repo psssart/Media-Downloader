@@ -43,21 +43,17 @@ server {
 
     # API. /extract runs yt-dlp synchronously and can take a while.
     # The UI polls /tasks every 2s and /files every 10s per open tab.
+    # Buffering is off so large media from /api/downloads/files/<name> streams
+    # to the client instead of filling nginx temp files.
+    # NB: don't add a separate `location /api/downloads/files/` — nginx would
+    # 301 the file list endpoint (/api/downloads/files) to the trailing-slash URL.
     location /api/ {
-        limit_req zone=perip burst=40 nodelay;
-        proxy_pass         http://media_downloader;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-
-    # Downloaded media can be large: stream to the client instead of
-    # buffering to nginx temp files.
-    location /api/downloads/files/ {
         limit_req zone=perip burst=40 nodelay;
         proxy_pass         http://media_downloader;
         proxy_buffering    off;
         proxy_max_temp_file_size 0;
         proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
     # Vite build output — file names are content-hashed
