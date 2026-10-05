@@ -1,0 +1,12 @@
+[Unit]
+Description=Media Downloader: update yt-dlp / instaloader
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/md-autoupdate
+ExecStart=/usr/local/bin/md-autoupdate
+# Includes up to IDLE_WAIT_MAX of waiting for active downloads
+TimeoutStartSec=1h

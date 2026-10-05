@@ -74,6 +74,7 @@ npm run build    # Production build to dist/
 - Vite dev server proxies `/api` requests to the backend
 - Docker uses multi-stage build: Python base → Node frontend builder → dev/prod targets
 - Production runs as non-root user (appuser, UID 1000)
+- Production server runs a systemd timer (`deploy/autoupdate/`) that upgrades yt-dlp/instaloader in the running image every 6h and recreates the container only if versions changed, with health-based rollback
 
 ## Environment Variables
 

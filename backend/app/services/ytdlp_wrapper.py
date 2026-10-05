@@ -83,6 +83,106 @@ class YTDLPWrapper:
         match = re.search(r'instagram\.com/(?:p|reel|reels)/([A-Za-z0-9_-]+)', url)
         return match.group(1) if match else None
 
+    def _extract_instagram_graphql(self, url: str, shortcode: str) -> MediaInfo:
+        """Extract Instagram post data via the public GraphQL API (no login needed)."""
+        import json as json_mod
+
+        gql_url = "https://www.instagram.com/api/graphql"
+        payload = urllib.parse.urlencode({
+            "variables": json_mod.dumps({"shortcode": shortcode}),
+            "doc_id": "10015901848480474",
+            "lsd": "AVqbxe3J_YA",
+        }).encode()
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-IG-App-ID": "936619743392459",
+            "X-FB-LSD": "AVqbxe3J_YA",
+            "X-ASBD-ID": "129477",
+            "Sec-Fetch-Site": "same-origin",
+        }
+
+        req = urllib.request.Request(gql_url, data=payload, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json_mod.loads(resp.read().decode("utf-8"))
+
+        item = data.get("data", {}).get("xdt_shortcode_media")
+        if not item:
+            raise ValueError("Instagram GraphQL returned no data for this post")
+
+        caption_edges = item.get("edge_media_to_caption", {}).get("edges", [])
+        caption = caption_edges[0]["node"]["text"] if caption_edges else ""
+        title = caption.split('\n')[0][:100] if caption else shortcode
+        owner = item.get("owner", {})
+        uploader = owner.get("username")
+        thumbnail = item.get("display_url") or item.get("thumbnail_src")
+
+        # Carousel / sidecar
+        sidecar_edges = (item.get("edge_sidecar_to_children") or {}).get("edges", [])
+        if sidecar_edges:
+            entries = []
+            for idx, edge in enumerate(sidecar_edges):
+                node = edge.get("node", {})
+                is_video = node.get("is_video", False)
+                entries.append(MediaInfo(
+                    id=f"{shortcode}_{idx}",
+                    title=f"{title} ({idx + 1})",
+                    thumbnail=node.get("display_url"),
+                    uploader=uploader,
+                    webpage_url=url,
+                    extractor="Instagram",
+                    media_type="video" if is_video else "image",
+                    source_url=node.get("video_url") if is_video else node.get("display_url"),
+                    duration=None,
+                ))
+
+            return MediaInfo(
+                id=shortcode,
+                title=title,
+                description=caption[:300] if caption else None,
+                thumbnail=thumbnail,
+                uploader=uploader,
+                webpage_url=url,
+                extractor="Instagram",
+                media_type="video",
+                entries=entries,
+                duration=None,
+            )
+
+        # Single image or video
+        is_video = item.get("is_video", False)
+        if is_video:
+            return MediaInfo(
+                id=shortcode,
+                title=title,
+                description=caption[:300] if caption else None,
+                thumbnail=thumbnail,
+                uploader=uploader,
+                webpage_url=url,
+                extractor="Instagram",
+                media_type="video",
+                source_url=item.get("video_url"),
+                duration=int(item["video_duration"]) if item.get("video_duration") else None,
+            )
+
+        return MediaInfo(
+            id=shortcode,
+            title=title,
+            description=caption[:300] if caption else None,
+            thumbnail=thumbnail,
+            uploader=uploader,
+            webpage_url=url,
+            extractor="Instagram",
+            media_type="image",
+            source_url=item.get("display_url"),
+            duration=None,
+        )
+
     def _extract_instagram_info(self, url: str) -> MediaInfo:
         """Extract media info from Instagram using instaloader."""
         import instaloader
@@ -96,7 +196,8 @@ class YTDLPWrapper:
         try:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
         except Exception as e:
-            raise ValueError(f"Failed to get Instagram post: {e}")
+            logger.warning(f"Instaloader API failed, trying GraphQL fallback: {e}")
+            return self._extract_instagram_graphql(url, shortcode)
 
         caption = post.caption or ""
         title = caption.split('\n')[0][:100] if caption else shortcode
@@ -204,14 +305,7 @@ class YTDLPWrapper:
                     try:
                         return self._extract_instagram_info(url)
                     except Exception as insta_err:
-                        logger.error(f"Instaloader fallback also failed: {insta_err}")
-                        # If no cookies and instaloader also failed, suggest cookies
-                        if not has_cookies:
-                            raise ValueError(
-                                "Instagram requires cookies to download this content. "
-                                "Please go to Settings and upload a cookies.txt file from a "
-                                "browser where you are logged into Instagram."
-                            )
+                        logger.error(f"Instagram fallback also failed: {insta_err}")
                         raise ValueError(f"Failed to extract Instagram info: {insta_err}")
 
                 site_name = self._needs_cookies(url)

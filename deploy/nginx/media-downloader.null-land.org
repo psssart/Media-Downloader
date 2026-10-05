@@ -1,0 +1,81 @@
+# Media Downloader — media-downloader.null-land.org
+#
+# HTTP -> HTTPS redirect and ACME challenge are already handled by the
+# `*.null-land.org` port-80 server in sites-available/null-land.org.
+#
+# Install:
+#   sudo cp deploy/nginx/media-downloader.null-land.org /etc/nginx/sites-available/
+#   sudo ln -s ../sites-available/media-downloader.null-land.org /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+
+upstream media_downloader {
+    server 127.0.0.1:8082;
+    keepalive 16;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name media-downloader.null-land.org;
+
+    # Certificate must cover media-downloader.null-land.org (see snippet / certbot)
+    include snippets/ssl-params.conf;
+    include snippets/security-headers.conf;
+
+    # Cookie files uploaded via Settings are small
+    client_max_body_size 5m;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 256;
+    gzip_types text/plain text/css text/xml application/javascript application/json application/xml application/manifest+json image/svg+xml image/x-icon;
+
+    proxy_http_version 1.1;
+    proxy_set_header   Connection        "";
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-Host  $host;
+
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+
+    # API. /extract runs yt-dlp synchronously and can take a while.
+    # The UI polls /tasks every 2s and /files every 10s per open tab.
+    location /api/ {
+        limit_req zone=perip burst=40 nodelay;
+        proxy_pass         http://media_downloader;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # Downloaded media can be large: stream to the client instead of
+    # buffering to nginx temp files.
+    location /api/downloads/files/ {
+        limit_req zone=perip burst=40 nodelay;
+        proxy_pass         http://media_downloader;
+        proxy_buffering    off;
+        proxy_max_temp_file_size 0;
+        proxy_read_timeout 300s;
+    }
+
+    # Vite build output — file names are content-hashed
+    location /assets/ {
+        include snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        proxy_pass http://media_downloader;
+    }
+
+    # PWA service worker and manifest must not be cached, or clients get stuck on old builds
+    location ~ ^/(sw\.js|registerSW\.js|workbox-[^/]+\.js|manifest\.webmanifest)$ {
+        include snippets/security-headers.conf;
+        add_header Cache-Control "no-cache";
+        proxy_pass http://media_downloader;
+    }
+
+    # SPA (index.html + client-side routes)
+    location / {
+        proxy_pass http://media_downloader;
+    }
+}

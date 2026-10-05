@@ -417,6 +417,8 @@ function VideoCard({ media, onDownload, downloading }) {
       quality: audioOnly ? 'audio_only' : quality,
       audioOnly,
       mediaType: 'video',
+      sourceUrl: media.source_url,
+      title: media.title,
     });
   };
 
