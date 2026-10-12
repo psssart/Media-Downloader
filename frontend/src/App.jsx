@@ -97,12 +97,27 @@ function App() {
         mediaType: options.mediaType || 'video',
         sourceUrl: options.sourceUrl,
         title: options.title,
+        compression: options.compression,
       });
       fetchTasks();
+      return null;
     } catch (err) {
+      // Compression admission rejections carry alternatives; the card shows them
+      if (err.data?.alternatives) return { rejection: err.data };
       setError(err.message);
+      return null;
     } finally {
       setDownloading(false);
+    }
+  };
+
+  // Handle task cancellation (compression tasks)
+  const handleCancelTask = async (taskId) => {
+    try {
+      await api.cancelTask(taskId);
+      fetchTasks();
+    } catch (err) {
+      console.error('Failed to cancel task:', err);
     }
   };
 
@@ -196,6 +211,7 @@ function App() {
             <TaskList
               tasks={tasks}
               onDelete={handleDeleteTask}
+              onCancel={handleCancelTask}
               onClearCompleted={handleClearCompleted}
               onRefresh={fetchTasks}
             />

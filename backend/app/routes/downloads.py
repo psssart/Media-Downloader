@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List
 import urllib.request
 import logging
@@ -10,11 +11,15 @@ from ..models import (
     DownloadRequest,
     DownloadTask,
     DownloadedFile,
+    CompressionEstimateRequest,
 )
-from ..dependencies import get_client_id
+from ..dependencies import get_client_id, get_client_ip
 from ..services.ytdlp_wrapper import ytdlp_wrapper
 from ..services.task_manager import task_manager
+from ..services.compressor import compressor, quality_cap, AdmissionRejected
 from ..services.file_manager import file_manager
+
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,8 @@ router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 async def extract_info(request: URLRequest):
     """Extract media information from URL."""
     try:
-        info = ytdlp_wrapper.extract_info(str(request.url))
+        # In a thread: yt-dlp is blocking and must not stall the event loop
+        info = await run_in_threadpool(ytdlp_wrapper.extract_info_cached, str(request.url), True)
         return info
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -34,13 +40,68 @@ async def extract_info(request: URLRequest):
 
 
 @router.post("/start", response_model=DownloadTask)
-async def start_download(request: DownloadRequest, client_id: str = Depends(get_client_id)):
-    """Start a new download task."""
+async def start_download(
+    request: DownloadRequest,
+    client_id: str = Depends(get_client_id),
+    client_ip: str | None = Depends(get_client_ip),
+):
+    """Start a new download task.
+
+    Compression requests that don't pass admission get 409 with a structured
+    detail: {code, message, ..., alternatives: [{kind, label, options}]}.
+    """
     try:
-        task = await task_manager.create_task(request, client_id)
+        task = await task_manager.create_task(request, client_id, client_ip)
         return task
+    except AdmissionRejected as e:
+        return JSONResponse(status_code=409, content={"detail": e.detail})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start download: {str(e)}")
+
+
+@router.get("/compression/presets")
+async def get_compression_presets():
+    """Platform presets and limits for the compression UI."""
+    return {
+        "enabled": settings.compression_enabled,
+        "presets": compressor.public_presets(),
+        # Output resolutions (short side) a user may pick instead of auto
+        "resolutions": sorted((h for h in settings.compression_resolution_ladder
+                               if h <= settings.compression_max_input_height), reverse=True),
+        "max_total_wait_seconds": settings.compression_max_total_wait_sec,
+        "max_input_duration_seconds": settings.compression_max_input_duration_sec,
+    }
+
+
+@router.post("/compression/estimate")
+async def estimate_compression(
+    request: CompressionEstimateRequest,
+    client_id: str = Depends(get_client_id),
+    client_ip: str | None = Depends(get_client_ip),
+):
+    """Admission dry run from yt-dlp metadata: verdict, plan and alternatives."""
+    try:
+        media = await run_in_threadpool(ytdlp_wrapper.extract_info_cached, str(request.url))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return compressor.estimate(media, quality_cap(request.quality), request.compression,
+                               client_id, client_ip)
+
+
+@router.get("/compression/stats")
+async def get_compression_stats():
+    """Estimate-vs-actual metrics for tuning decode factors and the safety factor."""
+    return compressor.stats()
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str, client_id: str = Depends(get_client_id)):
+    """Cancel an active compression task."""
+    if not await task_manager.cancel_task(task_id, client_id):
+        raise HTTPException(status_code=404, detail="No active compression task with this ID")
+    return {"message": "Task cancelled"}
 
 
 @router.get("/tasks", response_model=List[DownloadTask])

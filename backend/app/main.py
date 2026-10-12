@@ -8,6 +8,7 @@ import logging
 from .config import settings
 from .routes import downloads, settings as settings_router
 from .services.file_manager import file_manager
+from .services.compressor import compressor
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +34,10 @@ async def lifespan(app: FastAPI):
         minutes=settings.cleanup_interval_minutes,
         id="cleanup_old_files",
     )
+    # Compression: orphan cleanup, workers, background calibration
+    compressor.start()
+    scheduler.add_job(compressor.tick, "interval", seconds=15, id="compression_tick")
+
     scheduler.start()
     logger.info("Cleanup scheduler started")
 
@@ -40,6 +45,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     scheduler.shutdown()
+    compressor.shutdown()
     logger.info("Application shutdown complete")
 
 

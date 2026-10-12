@@ -1,7 +1,9 @@
 import {
   Loader2, CheckCircle2, XCircle, Clock, Download,
-  Trash2, RefreshCw, Merge
+  Trash2, RefreshCw, Merge, Hourglass, Shrink, Ban, X
 } from 'lucide-react';
+
+const TERMINAL = ['completed', 'failed', 'cancelled'];
 
 const STATUS_CONFIG = {
   pending: {
@@ -29,6 +31,18 @@ const STATUS_CONFIG = {
     bgColor: 'bg-purple-900/20',
     label: 'Merging'
   },
+  queued: {
+    icon: Hourglass,
+    color: 'text-yellow-400',
+    bgColor: 'bg-yellow-900/20',
+    label: 'Waiting for encoder'
+  },
+  compressing: {
+    icon: Shrink,
+    color: 'text-purple-400',
+    bgColor: 'bg-purple-900/20',
+    label: 'Encoding'
+  },
   completed: {
     icon: CheckCircle2,
     color: 'text-green-400',
@@ -41,11 +55,29 @@ const STATUS_CONFIG = {
     bgColor: 'bg-red-900/20',
     label: 'Failed'
   },
+  cancelled: {
+    icon: Ban,
+    color: 'text-slate-400',
+    bgColor: 'bg-slate-800/40',
+    label: 'Cancelled'
+  },
 };
 
-function TaskItem({ task, onDelete }) {
+function statusLabel(task, config) {
+  if (task.status === 'queued' && task.queue_position) {
+    return `${config.label} · #${task.queue_position} in queue`;
+  }
+  if (task.status === 'compressing' && task.compression_pass) {
+    return `${config.label} · pass ${task.compression_pass}/2`;
+  }
+  return config.label;
+}
+
+function TaskItem({ task, onDelete, onCancel }) {
   const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
   const StatusIcon = config.icon;
+  const result = task.compression_result;
+  const cancellable = task.compression_target_mb != null && !TERMINAL.includes(task.status);
 
   return (
     <div className={`p-4 rounded-lg border border-slate-700 ${config.bgColor}`}>
@@ -61,12 +93,21 @@ function TaskItem({ task, onDelete }) {
                 {task.title || task.url}
               </p>
               <p className="text-sm text-slate-400">
-                {config.label}
+                {statusLabel(task, config)}
                 {task.speed && ` • ${task.speed}`}
                 {task.eta && ` • ETA: ${task.eta}`}
               </p>
             </div>
 
+            {cancellable && (
+              <button
+                onClick={() => onCancel(task.task_id)}
+                className="p-1 text-slate-500 hover:text-yellow-400 transition-colors"
+                title="Cancel"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => onDelete(task.task_id)}
               className="p-1 text-slate-500 hover:text-red-400 transition-colors"
@@ -77,7 +118,7 @@ function TaskItem({ task, onDelete }) {
           </div>
 
           {/* Progress bar */}
-          {(task.status === 'downloading' || task.status === 'merging') && (
+          {['downloading', 'merging', 'compressing'].includes(task.status) && (
             <div className="mt-2">
               <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
                 <div
@@ -105,15 +146,24 @@ function TaskItem({ task, onDelete }) {
               ✓ {task.filename}
             </p>
           )}
+
+          {/* Compression report: actual size vs target, applied resolution */}
+          {task.status === 'completed' && result && (
+            <p className="text-xs text-slate-400">
+              {result.actual_mb} / {result.target_mb} MB · {result.width}×{result.height}
+              {result.passthrough && ' · already fit, kept as is'}
+              {result.retries > 0 && ` · ${result.retries} retr${result.retries > 1 ? 'ies' : 'y'}`}
+            </p>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export default function TaskList({ tasks, onDelete, onClearCompleted, onRefresh }) {
-  const activeTasks = tasks.filter(t => !['completed', 'failed'].includes(t.status));
-  const completedTasks = tasks.filter(t => ['completed', 'failed'].includes(t.status));
+export default function TaskList({ tasks, onDelete, onCancel, onClearCompleted, onRefresh }) {
+  const activeTasks = tasks.filter(t => !TERMINAL.includes(t.status));
+  const completedTasks = tasks.filter(t => TERMINAL.includes(t.status));
 
   if (tasks.length === 0) {
     return null;
@@ -146,7 +196,7 @@ export default function TaskList({ tasks, onDelete, onClearCompleted, onRefresh 
       {activeTasks.length > 0 && (
         <div className="space-y-2">
           {activeTasks.map((task) => (
-            <TaskItem key={task.task_id} task={task} onDelete={onDelete} />
+            <TaskItem key={task.task_id} task={task} onDelete={onDelete} onCancel={onCancel} />
           ))}
         </div>
       )}
@@ -158,7 +208,7 @@ export default function TaskList({ tasks, onDelete, onClearCompleted, onRefresh 
             <p className="text-sm text-slate-500 mt-4">Completed</p>
           )}
           {completedTasks.map((task) => (
-            <TaskItem key={task.task_id} task={task} onDelete={onDelete} />
+            <TaskItem key={task.task_id} task={task} onDelete={onDelete} onCancel={onCancel} />
           ))}
         </div>
       )}

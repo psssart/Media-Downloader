@@ -52,10 +52,11 @@ wait_healthy() {
 }
 
 # yt-dlp writes *.part / *.ytdl files while downloading; a recently touched one
-# means a download is in progress and a restart would kill it.
+# means a download is in progress and a restart would kill it. Compression jobs
+# (queued or encoding) live in .work/ and touch a heartbeat file every 15s.
 wait_idle() {
     local waited=0
-    while find "$DOWNLOADS_DIR" \( -name '*.part*' -o -name '*.ytdl' \) -mmin -2 -print -quit 2>/dev/null | grep -q .; do
+    while find "$DOWNLOADS_DIR" \( -name '*.part*' -o -name '*.ytdl' -o -path '*/.work/*' \) -mmin -2 -print -quit 2>/dev/null | grep -q .; do
         if (( waited >= IDLE_WAIT_MAX )); then
             log "downloads still active after ${IDLE_WAIT_MAX}s, restarting anyway"
             return

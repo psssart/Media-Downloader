@@ -17,6 +17,14 @@ services:
       - MD_CLEANUP_INTERVAL_MINUTES=10
       # Max concurrent downloads (default: 3)
       - MD_MAX_CONCURRENT_DOWNLOADS=3
+      # Video compression: defaults fit 1 vCPU / 3.5 GB / 20 GB.
+      # See README "Video compression" before changing these.
+      # - MD_COMPRESSION_CPU_CORES=1
+      # - MD_COMPRESSION_MAX_TOTAL_WAIT_SEC=1800
+    # Hard cap for the whole container. ffmpeg runs with oom_score_adj=1000, so if
+    # the cap is hit the kernel kills the encoder (job fails) and not the web app.
+    mem_limit: 2g
+    memswap_limit: 2g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s

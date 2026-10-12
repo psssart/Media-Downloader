@@ -63,3 +63,56 @@ body {
   background-size: 1rem 1rem;
   animation: progress-stripes 1s linear infinite;
 }
+
+/* Dual-thumb range (TrimSlider): two overlaid inputs, only the thumbs take pointer events */
+.range-dual {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.range-dual::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.range-dual::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 9999px;
+  background: theme('colors.white');
+  border: 3px solid theme('colors.primary.500');
+  cursor: grab;
+}
+
+.range-dual::-moz-range-track {
+  background: transparent;
+}
+
+.range-dual::-moz-range-thumb {
+  pointer-events: auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: theme('colors.white');
+  border: 3px solid theme('colors.primary.500');
+  cursor: grab;
+}
+
+.range-dual:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid theme('colors.primary.300');
+  outline-offset: 2px;
+}
+
+.range-dual:disabled::-webkit-slider-thumb,
+.range-dual:disabled::-moz-range-thumb {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

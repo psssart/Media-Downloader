@@ -1,0 +1,7 @@
+[
+  {"id": "discord", "name": "Discord", "target_size_mb": 20},
+  {"id": "discord-nitro-basic", "name": "Discord Nitro Basic", "target_size_mb": 50},
+  {"id": "email", "name": "Email attachment", "target_size_mb": 18},
+  {"id": "instagram-dm", "name": "Instagram DM", "target_size_mb": 25},
+  {"id": "telegram", "name": "Telegram", "target_size_mb": 2000, "hidden": true}
+]

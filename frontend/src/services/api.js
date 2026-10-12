@@ -44,7 +44,19 @@ class ApiService {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(error.detail || 'Request failed');
+      const { detail } = error;
+      let message = detail || 'Request failed';
+      if (Array.isArray(detail)) {
+        message = detail.map((d) => d.msg).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        message = detail.message || 'Request failed';
+      }
+      const err = new Error(message);
+      // Structured details (e.g. compression admission: code + alternatives)
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        err.data = detail;
+      }
+      throw err;
     }
 
     return response.json();
@@ -69,7 +81,27 @@ class ApiService {
         media_type: options.mediaType || 'video',
         source_url: options.sourceUrl || null,
         title: options.title || null,
+        compression: options.compression || null,
       }),
+    });
+  }
+
+  // Compression
+  async getCompressionPresets() {
+    return this.request('/downloads/compression/presets');
+  }
+
+  async estimateCompression(url, quality, compression, options = {}) {
+    return this.request('/downloads/compression/estimate', {
+      method: 'POST',
+      body: JSON.stringify({ url, quality: quality || 'best', compression }),
+      signal: options.signal,
+    });
+  }
+
+  async cancelTask(taskId) {
+    return this.request(`/downloads/tasks/${taskId}/cancel`, {
+      method: 'POST',
     });
   }
 

@@ -30,7 +30,14 @@ npm run dev      # Dev server on port 3000 (proxies /api to localhost:5000)
 npm run build    # Production build to dist/
 ```
 
-### No test suite exists yet. No linter configuration exists.
+### Tests
+```bash
+# Needs ffmpeg; run in the image (as uid 1000 like production):
+docker build --target base-python -t md-test-base .
+docker run --rm --user 1000:1000 -e HOME=/tmp -v $PWD/backend:/app -w /app md-test-base \
+  sh -c "pip install -q --user pytest httpx && python -m pytest -p no:cacheprovider"
+```
+Tests needing ffmpeg are skipped where it is missing. No linter configuration exists.
 
 ## Architecture
 
@@ -38,7 +45,7 @@ npm run build    # Production build to dist/
 
 - **Entry point**: `backend/app/main.py` — FastAPI app with lifespan manager, APScheduler cleanup job, static file serving, SPA catch-all route
 - **Config**: `backend/app/config.py` — Pydantic BaseSettings with `MD_` env prefix (MD_FILE_RETENTION_HOURS, MD_CLEANUP_INTERVAL_MINUTES, MD_MAX_CONCURRENT_DOWNLOADS, MD_DEBUG)
-- **Models**: `backend/app/models.py` — Pydantic models; TaskStatus enum: PENDING → PROCESSING → DOWNLOADING → MERGING → COMPLETED/FAILED
+- **Models**: `backend/app/models.py` — Pydantic models; TaskStatus enum: PENDING → PROCESSING → DOWNLOADING → MERGING → COMPLETED/FAILED; compression tasks add QUEUED → COMPRESSING and CANCELLED (`TERMINAL_STATUSES`)
 - **Dependencies**: `backend/app/dependencies.py` — `get_client_id` FastAPI dependency (extracts/validates UUID from X-Client-ID header or client_id query param)
 
 **Routes** (`backend/app/routes/`):
@@ -48,12 +55,15 @@ npm run build    # Production build to dist/
 **Services** (`backend/app/services/`):
 - `ytdlp_wrapper.py` — Singleton. Wraps yt-dlp for extraction and downloading. Handles quality presets (best/4k/1440p/1080p/720p/480p/360p), FFmpeg post-processing, cookie file loading, progress hooks
 - `task_manager.py` — Singleton. ThreadPoolExecutor for background downloads. In-memory task dict (UUID-keyed). Async with asyncio.Lock for thread safety. Tasks are **not persisted** across restarts. Tasks scoped by client_id
+- `compression_planner.py` — Pure functions (no I/O): bitrate budget, resolution ladder, source format choice, cost/RAM estimates, admission, alternatives. Unit-tested
+- `compression_calibrator.py` — Throughput model: startup calibration, refinement from finished jobs, CPU-steal correction; state in `downloads/.compression/`
+- `compressor.py` — Singleton. Admission + reservations, priority queue, worker threads running sandboxed two-pass ffmpeg (nice/ionice/prlimit/oom_score_adj, process-group kill), cleanup of `downloads/.work/`, metrics. Started/stopped in `main.py` lifespan; `tick()` runs every 15s
 - `file_manager.py` — Singleton. Per-user file listing in `downloads/{client_id}/` subdirectories, secure path resolution (traversal protection), thumbnail management, scheduled cleanup of old files + empty user dirs, storage stats
 
 ### Frontend (React 18, Vite 5, Tailwind CSS)
 
 - **App.jsx** — Main component holding all state. Polls tasks every 2s, files every 10s
-- **Components**: SearchBar, MediaCard (quality selector + audio-only toggle), TaskList (active/completed with progress), FileList (with thumbnails), SettingsPanel (cookie management modal)
+- **Components**: SearchBar, MediaCard (quality selector + audio-only toggle + CompressionPanel), CompressionPanel (preset/custom MB, debounced estimate, alternatives, reports status that gates the Download button), TrimSlider (dual range for "Trim to X" alternatives, clip length capped at X), TaskList (active/completed with progress, queue position, cancel, compression report), FileList (with thumbnails), SettingsPanel (cookie management modal)
 - **api.js** — Singleton ApiService class wrapping all backend endpoints with fetch. Generates per-client UUID (localStorage + cookie) and sends `X-Client-ID` header on all requests
 - **PWA** enabled via vite-plugin-pwa with network-first API caching and offline support
 
@@ -74,6 +84,7 @@ npm run build    # Production build to dist/
 - Vite dev server proxies `/api` requests to the backend
 - Docker uses multi-stage build: Python base → Node frontend builder → dev/prod targets
 - Production runs as non-root user (appuser, UID 1000)
+- Compression is opt-in per request (`DownloadRequest.compression`). Admission happens in `/start` before the download; rejections are HTTP 409 with `detail: {code, message, alternatives}` (frontend reads `err.data`). Dot-directories in `downloads/` (`.work`, `.compression`) are skipped by listing and retention cleanup
 - Production server runs a systemd timer (`deploy/autoupdate/`) that upgrades yt-dlp/instaloader in the running image every 6h and recreates the container only if versions changed, with health-based rollback
 
 ## Environment Variables
@@ -83,3 +94,4 @@ All prefixed with `MD_`, loaded from `.env`:
 - `MD_CLEANUP_INTERVAL_MINUTES` (default: 10)
 - `MD_MAX_CONCURRENT_DOWNLOADS` (default: 3)
 - `MD_DEBUG` (default: false)
+- `MD_COMPRESSION_*` — video compression limits and cost model, see README "Video compression"

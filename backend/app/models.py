@@ -1,5 +1,5 @@
-from pydantic import BaseModel, HttpUrl
-from typing import Optional, List
+from pydantic import BaseModel, Field, HttpUrl
+from typing import Optional, List, Dict, Any
 from enum import Enum
 from datetime import datetime
 
@@ -9,8 +9,14 @@ class TaskStatus(str, Enum):
     PROCESSING = "processing"
     DOWNLOADING = "downloading"
     MERGING = "merging"
+    QUEUED = "queued"  # downloaded, waiting for a compression slot
+    COMPRESSING = "compressing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+TERMINAL_STATUSES = (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
 
 
 class FormatInfo(BaseModel):
@@ -25,6 +31,7 @@ class FormatInfo(BaseModel):
     acodec: Optional[str] = None
     abr: Optional[float] = None
     vbr: Optional[float] = None
+    tbr: Optional[float] = None
     format_note: Optional[str] = None
     quality_label: Optional[str] = None
     has_video: bool = True
@@ -56,6 +63,20 @@ class URLRequest(BaseModel):
     url: HttpUrl
 
 
+class CompressionOptions(BaseModel):
+    """Compress the downloaded video to a target file size."""
+    preset_id: Optional[str] = None  # platform preset; None means custom target_size_mb
+    target_size_mb: Optional[float] = Field(None, gt=0, le=100000)
+    # Overrides used by admission alternatives
+    max_height: Optional[int] = Field(None, gt=0)  # output short side cap
+    resolution: Optional[int] = Field(None, gt=0)  # exact output short side; None = auto
+    prefer_h264: bool = False
+    encoder_preset: Optional[str] = None
+    trim_start: Optional[float] = Field(None, ge=0)
+    trim_end: Optional[float] = Field(None, gt=0)
+    deferred: bool = False
+
+
 class DownloadRequest(BaseModel):
     """Request to download media."""
     url: HttpUrl
@@ -65,6 +86,26 @@ class DownloadRequest(BaseModel):
     media_type: str = "video"
     source_url: Optional[str] = None
     title: Optional[str] = None
+    compression: Optional[CompressionOptions] = None  # off unless set
+
+
+class CompressionEstimateRequest(BaseModel):
+    """Dry-run admission check for a compression download."""
+    url: HttpUrl
+    quality: Optional[str] = "best"
+    compression: CompressionOptions
+
+
+class CompressionResult(BaseModel):
+    """Final compression report."""
+    target_mb: float
+    actual_mb: float
+    width: int
+    height: int
+    fps: float
+    encoder_preset: str
+    retries: int = 0
+    passthrough: bool = False  # source already fit the target, no re-encode
 
 
 class DownloadTask(BaseModel):
@@ -81,6 +122,12 @@ class DownloadTask(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    # Compression (only set for compression tasks)
+    compression_target_mb: Optional[float] = None
+    compression_pass: Optional[int] = None  # 1 or 2 while encoding
+    queue_position: Optional[int] = None  # 1-based while QUEUED
+    estimate_seconds: Optional[float] = None
+    compression_result: Optional[CompressionResult] = None
 
 
 class DownloadedFile(BaseModel):

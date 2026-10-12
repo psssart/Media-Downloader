@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Music, Video, Image, Clock, User, Eye, Loader2, Play, ExternalLink, CheckSquare, Square } from 'lucide-react';
 import api from '../services/api';
+import CompressionPanel, {
+  COMPRESSION_OFF, buildCompressionOptions, useCompressionConfig,
+} from './CompressionPanel';
 
 const QUALITY_OPTIONS = [
   { value: 'best', label: 'Best Available' },
@@ -38,6 +41,42 @@ function formatFileSize(bytes) {
   return `~${bytes} B`;
 }
 
+const SIZE_DEBOUNCE_MS = 3000;
+const SIZE_WARN_BYTES = 50 * 1048576;
+const SIZE_LARGE_BYTES = 300 * 1048576;
+
+function sizeBadgeClass(bytes) {
+  if (bytes > SIZE_LARGE_BYTES) return 'text-rose-200 bg-rose-900/60 border-rose-800/70';
+  if (bytes > SIZE_WARN_BYTES) return 'text-amber-200 bg-amber-500/15 border-amber-500/30';
+  return 'text-slate-500 border-transparent';
+}
+
+// Estimated size that settles SIZE_DEBOUNCE_MS after the last quality change; `pending` until then
+function useDebouncedSize(bytes, key) {
+  const [settled, setSettled] = useState(bytes);
+  const [pending, setPending] = useState(false);
+  const latest = useRef(bytes);
+  latest.current = bytes;
+  const settledKey = useRef(key);
+
+  useEffect(() => {
+    if (settledKey.current === key) {
+      // Switched back to the already shown choice before the debounce fired
+      setPending(false);
+      return undefined;
+    }
+    setPending(true);
+    const timer = setTimeout(() => {
+      settledKey.current = key;
+      setSettled(latest.current);
+      setPending(false);
+    }, SIZE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [key]);
+
+  return { bytes: settled, pending };
+}
+
 function getFormatHeight(format) {
   if (!format.resolution) return null;
   // resolution is "WxH" or "Hp"
@@ -45,62 +84,78 @@ function getFormatHeight(format) {
   return match ? parseInt(match[1], 10) : null;
 }
 
-function getFormatSize(format) {
+// Largest short side among the video formats (vertical videos count by width)
+function getSourceShortSide(formats) {
+  let best = 0;
+  (formats || []).forEach((f) => {
+    if (!f.has_video || !f.resolution) return;
+    const wh = f.resolution.match(/^(\d+)x(\d+)$/);
+    const short = wh ? Math.min(+wh[1], +wh[2]) : parseInt(f.resolution, 10);
+    if (short > best) best = short;
+  });
+  return best || null;
+}
+
+function getRealSize(format) {
   return format.filesize ?? format.filesize_approx ?? null;
 }
 
-function estimateFileSize(formats, quality, audioOnly) {
+// Exact/approx size from the extractor, else bitrate (kbit/s) x duration
+function getFormatSize(format, duration) {
+  const size = getRealSize(format);
+  if (size) return size;
+  return format.tbr && duration ? Math.round(format.tbr * 125 * duration) : null;
+}
+
+// yt-dlp's default codec preference among equal resolutions
+function codecRank(vcodec = '') {
+  if (vcodec.startsWith('av01')) return 4;
+  if (vcodec.startsWith('vp9') || vcodec.startsWith('vp09')) return 3;
+  if (vcodec.startsWith('hev') || vcodec.startsWith('hvc') || vcodec.startsWith('h265')) return 2;
+  return 1;
+}
+
+function pickBest(formats, rank) {
+  const better = (x, y) => {
+    const rx = rank(x), ry = rank(y);
+    for (let i = 0; i < rx.length; i++) if (rx[i] !== ry[i]) return rx[i] > ry[i];
+    return false;
+  };
+  return formats.reduce((best, f) => (best && !better(f, best) ? best : f), null);
+}
+
+// Mirrors the backend selectors: bestvideo[height<=N][ext=mp4] + bestaudio[ext=m4a].
+// HLS variants of the same height often carry no size, so formats with a known size win ties.
+function estimateFileSize(formats, quality, audioOnly, duration) {
   if (!formats || formats.length === 0) return null;
 
   const audioFormats = formats.filter(f => f.has_audio && !f.has_video);
-  const videoFormats = formats.filter(f => f.has_video);
+  const bestAudio = pickBest(audioFormats, (f) => [
+    !audioOnly && f.ext === 'm4a' ? 1 : 0, f.abr || 0, getRealSize(f) ? 1 : 0,
+  ]);
+  const audioSize = bestAudio ? getFormatSize(bestAudio, duration) : null;
 
-  // Best audio-only format (highest abr)
-  const bestAudio = audioFormats.length > 0
-    ? audioFormats.reduce((best, f) => (f.abr || 0) > (best.abr || 0) ? f : best)
-    : null;
+  if (audioOnly) return audioSize;
 
-  if (audioOnly) {
-    if (!bestAudio) return null;
-    return getFormatSize(bestAudio);
-  }
+  const maxHeight = quality === 'best' ? Infinity : quality === '4k' ? 2160 : parseInt(quality, 10);
+  if (!maxHeight) return null;
 
-  // Find the appropriate video format
-  let videoFormat = null;
-
-  if (quality === 'best') {
-    // Largest video format by size, falling back to highest resolution
-    const withSize = videoFormats.filter(f => getFormatSize(f));
-    if (withSize.length > 0) {
-      videoFormat = withSize.reduce((best, f) => getFormatSize(f) > getFormatSize(best) ? f : best);
-    } else if (videoFormats.length > 0) {
-      videoFormat = videoFormats.reduce((best, f) => (getFormatHeight(f) || 0) > (getFormatHeight(best) || 0) ? f : best);
-    }
-  } else {
-    // Quality like "1080p", "720p", "4k" etc.
-    const maxHeight = quality === '4k' ? 2160 : parseInt(quality, 10);
-    if (!maxHeight) return null;
-
-    // Filter to video-only formats at or below the target height, pick the best one
-    const eligible = videoFormats.filter(f => {
-      const h = getFormatHeight(f);
-      return h && h <= maxHeight;
-    });
-
-    if (eligible.length > 0) {
-      videoFormat = eligible.reduce((best, f) => (getFormatHeight(f) || 0) > (getFormatHeight(best) || 0) ? f : best);
-    }
-  }
-
+  const eligible = formats.filter(f => {
+    if (!f.has_video) return false;
+    const h = getFormatHeight(f);
+    return maxHeight === Infinity || (h && h <= maxHeight);
+  });
+  const mp4 = eligible.filter(f => f.ext === 'mp4');
+  const videoFormat = pickBest(mp4.length > 0 ? mp4 : eligible, (f) => [
+    getFormatHeight(f) || 0, getRealSize(f) ? 1 : 0, codecRank(f.vcodec), f.fps || 0, f.tbr || 0,
+  ]);
   if (!videoFormat) return null;
 
-  const videoSize = getFormatSize(videoFormat);
+  const videoSize = getFormatSize(videoFormat, duration);
   if (!videoSize) return null;
 
   // If the video format already includes audio, don't add audio size
   if (videoFormat.has_audio) return videoSize;
-
-  const audioSize = bestAudio ? getFormatSize(bestAudio) : null;
   return audioSize ? videoSize + audioSize : videoSize;
 }
 
@@ -410,19 +465,55 @@ function VideoCard({ media, onDownload, downloading }) {
   const [quality, setQuality] = useState('best');
   const [audioOnly, setAudioOnly] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [compression, setCompression] = useState(COMPRESSION_OFF);
+  const [rejection, setRejection] = useState(null);
+  const [compressionStatus, setCompressionStatus] = useState('off');
+  const [autoHeight, setAutoHeight] = useState(null);
+  const compressionConfig = useCompressionConfig();
+  const compressing = compression.enabled && !audioOnly;
 
-  const handleDownload = () => {
-    onDownload({
+  // With compression on, the selector picks the output resolution instead of the source quality
+  const sourceShort = getSourceShortSide(media.formats);
+  const resolutionOptions = (compressionConfig?.resolutions || [])
+    .filter((h) => !sourceShort || h <= sourceShort);
+
+  const handleCompressionStatus = useCallback((status, height) => {
+    setCompressionStatus(status);
+    setAutoHeight(height);
+  }, []);
+
+  const compressionOptions = audioOnly ? null : buildCompressionOptions(compression);
+  // With compression on, downloading is only possible once the settings pass admission
+  const blocked = !audioOnly && compression.enabled && compressionStatus !== 'ok';
+  const blockedReason = compressionStatus === 'checking'
+    ? 'Checking compression settings…'
+    : 'File is too large or long, configure compression';
+
+  const handleCompressionChange = (value) => {
+    setCompression(value);
+    setRejection(null);
+  };
+
+  const handleDownload = async () => {
+    setRejection(null);
+    const result = await onDownload({
       url: media.webpage_url,
-      quality: audioOnly ? 'audio_only' : quality,
+      quality: audioOnly ? 'audio_only' : (compressionOptions ? 'best' : quality),
       audioOnly,
       mediaType: 'video',
       sourceUrl: media.source_url,
       title: media.title,
+      compression: compressionOptions,
     });
+    // Admission rejected: show the reason and alternatives next to the controls
+    if (result?.rejection) setRejection(result.rejection);
   };
 
-  const estimatedSize = formatFileSize(estimateFileSize(media.formats, quality, audioOnly));
+  const sizeEstimate = useDebouncedSize(
+    estimateFileSize(media.formats, quality, audioOnly, media.duration),
+    `${quality}|${audioOnly}`,
+  );
+  const estimatedSize = formatFileSize(sizeEstimate.bytes);
 
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
@@ -536,20 +627,45 @@ function VideoCard({ media, onDownload, downloading }) {
           {/* Download options */}
           <div className="mt-auto flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
-              <select
-                value={quality}
-                onChange={(e) => setQuality(e.target.value)}
-                disabled={audioOnly || downloading}
-                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg
-                           focus:outline-none focus:ring-2 focus:ring-primary-500
-                           disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {QUALITY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+              {compressing ? (
+                <select
+                  value={compression.resolution || 'auto'}
+                  onChange={(e) => handleCompressionChange({
+                    ...compression,
+                    resolution: e.target.value === 'auto' ? null : Number(e.target.value),
+                    overrides: {},
+                    trimMax: null,
+                  })}
+                  disabled={downloading}
+                  aria-label="Output resolution"
+                  title="Output resolution of the compressed file"
+                  className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg
+                             focus:outline-none focus:ring-2 focus:ring-primary-500
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="auto">
+                    {autoHeight && !compression.resolution ? `Auto (${autoHeight}p)` : 'Auto (best that fits)'}
                   </option>
-                ))}
-              </select>
+                  {resolutionOptions.map((h) => (
+                    <option key={h} value={h}>{h}p</option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={quality}
+                  onChange={(e) => setQuality(e.target.value)}
+                  disabled={audioOnly || downloading}
+                  className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg
+                             focus:outline-none focus:ring-2 focus:ring-primary-500
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {QUALITY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <label className="flex items-center gap-2 cursor-pointer">
@@ -566,29 +682,65 @@ function VideoCard({ media, onDownload, downloading }) {
             </label>
 
             <div className="ml-auto flex items-center gap-3">
-              {estimatedSize && (
-                <span className="text-xs text-slate-500">{estimatedSize}</span>
-              )}
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                className="px-6 py-2 bg-primary-600 hover:bg-primary-700
-                           disabled:bg-slate-700 disabled:cursor-not-allowed
-                           rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                {downloading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    Download
-                  </>
+              {!compressionOptions && (sizeEstimate.pending ? (
+                <Loader2
+                  className="w-4 h-4 animate-spin text-slate-500"
+                  aria-label="Estimating file size"
+                />
+              ) : estimatedSize && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${sizeBadgeClass(sizeEstimate.bytes)}`}
+                  title="Estimated file size"
+                >
+                  {estimatedSize}
+                </span>
+              ))}
+              {/* Disabled buttons get no hover events in some browsers, so the tooltip lives on a wrapper */}
+              <span className="relative group" tabIndex={blocked ? 0 : undefined}>
+                <button
+                  onClick={handleDownload}
+                  disabled={downloading || blocked}
+                  aria-describedby={blocked ? 'download-blocked-reason' : undefined}
+                  className="px-6 py-2 bg-primary-600 hover:bg-primary-700
+                             disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed
+                             rounded-lg font-medium transition-colors flex items-center gap-2"
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Download
+                    </>
+                  )}
+                </button>
+                {blocked && !downloading && (
+                  <span
+                    id="download-blocked-reason"
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full right-0 mb-2 w-max max-w-[16rem]
+                               px-2 py-1 text-xs text-slate-100 bg-slate-950 border border-slate-700
+                               rounded shadow-lg opacity-0 transition-opacity
+                               group-hover:opacity-100 group-focus-within:opacity-100 group-focus:opacity-100"
+                  >
+                    {blockedReason}
+                  </span>
                 )}
-              </button>
+              </span>
             </div>
+
+            <CompressionPanel
+              url={media.webpage_url}
+              duration={media.duration}
+              value={compression}
+              onChange={handleCompressionChange}
+              onStatusChange={handleCompressionStatus}
+              disabled={audioOnly || downloading}
+              rejection={rejection}
+            />
           </div>
         </div>
       </div>

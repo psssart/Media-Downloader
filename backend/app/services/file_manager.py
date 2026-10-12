@@ -142,6 +142,10 @@ class FileManager:
             return 0
 
         for entry in self.downloads_dir.iterdir():
+            # .work (compression in progress) and .compression (state) are managed elsewhere
+            if entry.name.startswith("."):
+                continue
+
             if entry.is_file():
                 # Legacy files in root downloads dir
                 mtime = datetime.fromtimestamp(entry.stat().st_mtime)

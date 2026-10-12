@@ -1,4 +1,6 @@
 import re
+import threading
+import time
 import urllib.parse
 import urllib.request
 import http.cookiejar
@@ -13,6 +15,11 @@ from ..models import MediaInfo, FormatInfo
 
 logger = logging.getLogger(__name__)
 
+# Extracted info is reused by compression estimate/start for a few minutes,
+# so planning a compression download doesn't run yt-dlp again
+_INFO_CACHE_TTL = 300
+_INFO_CACHE_MAX = 64
+
 # Sites that typically require cookies for extraction
 _COOKIE_REQUIRED_PATTERNS = [
     (r'facebook\.com|fb\.watch', 'Facebook'),
@@ -25,6 +32,8 @@ class YTDLPWrapper:
 
     def __init__(self, cookies_file: Optional[Path] = None):
         self.cookies_file = cookies_file or settings.cookies_dir / "cookies.txt"
+        self._info_cache: Dict[str, tuple] = {}
+        self._info_cache_lock = threading.Lock()
 
     def _get_base_opts(self) -> Dict[str, Any]:
         """Get base yt-dlp options."""
@@ -281,6 +290,24 @@ class YTDLPWrapper:
             duration=None,
         )
 
+    def extract_info_cached(self, url: str, refresh: bool = False) -> MediaInfo:
+        """extract_info with a short-lived per-URL cache."""
+        now = time.monotonic()
+        if not refresh:
+            with self._info_cache_lock:
+                hit = self._info_cache.get(url)
+            if hit and now - hit[0] < _INFO_CACHE_TTL:
+                return hit[1]
+        info = self.extract_info(url)
+        with self._info_cache_lock:
+            self._info_cache = {
+                k: v for k, v in self._info_cache.items() if now - v[0] < _INFO_CACHE_TTL
+            }
+            if len(self._info_cache) >= _INFO_CACHE_MAX:
+                self._info_cache.pop(min(self._info_cache, key=lambda k: self._info_cache[k][0]))
+            self._info_cache[url] = (now, info)
+        return info
+
     def extract_info(self, url: str) -> MediaInfo:
         """Extract media information from URL."""
         opts = self._get_base_opts()
@@ -389,6 +416,7 @@ class YTDLPWrapper:
                 acodec=fmt.get("acodec"),
                 abr=fmt.get("abr"),
                 vbr=fmt.get("vbr"),
+                tbr=fmt.get("tbr"),
                 format_note=fmt.get("format_note"),
                 quality_label=self._get_quality_label(fmt),
                 has_video=has_video,
@@ -475,6 +503,8 @@ class YTDLPWrapper:
         output_path: Path,
         format_spec: Optional[str] = None,
         progress_hook: Optional[Callable] = None,
+        convert_to_mp4: bool = True,
+        max_filesize: Optional[int] = None,
     ) -> str:
         """Download media from URL.
 
@@ -483,6 +513,9 @@ class YTDLPWrapper:
             output_path: Directory to save file
             format_spec: yt-dlp format specification
             progress_hook: Callback for progress updates
+            convert_to_mp4: Re-encode non-mp4 results to mp4. Disabled for
+                compression downloads, which are re-encoded anyway.
+            max_filesize: Abort if the download is larger (bytes)
 
         Returns:
             Path to downloaded file
@@ -491,15 +524,17 @@ class YTDLPWrapper:
         opts.update({
             "outtmpl": str(output_path / "%(title)s.%(ext)s"),
             "format": format_spec or settings.default_format,
-            "merge_output_format": "mp4",
+            "merge_output_format": "mp4" if convert_to_mp4 else "mp4/mkv",
             "writethumbnail": True,
             "postprocessors": [{
                 "key": "FFmpegVideoConvertor",
                 "preferedformat": "mp4",
-            }],
+            }] if convert_to_mp4 else [],
             "quiet": False,
             "no_warnings": False,
         })
+        if max_filesize:
+            opts["max_filesize"] = max_filesize
 
         if progress_hook:
             opts["progress_hooks"] = [progress_hook]
@@ -514,10 +549,12 @@ class YTDLPWrapper:
                 filename = ydl.prepare_filename(info)
                 # Handle merged files
                 if not Path(filename).exists():
-                    # Try with .mp4 extension
-                    mp4_file = Path(filename).with_suffix(".mp4")
-                    if mp4_file.exists():
-                        filename = str(mp4_file)
+                    # Try with .mp4 (or .mkv when not converting) extension
+                    for suffix in (".mp4",) if convert_to_mp4 else (".mp4", ".mkv"):
+                        merged = Path(filename).with_suffix(suffix)
+                        if merged.exists():
+                            filename = str(merged)
+                            break
 
                 return filename
 

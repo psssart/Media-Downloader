@@ -8,10 +8,15 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from ..config import settings
-from ..models import DownloadTask, TaskStatus, DownloadRequest
+from ..models import DownloadTask, TaskStatus, DownloadRequest, TERMINAL_STATUSES
 from .ytdlp_wrapper import ytdlp_wrapper, YTDLPWrapper
+from .compressor import compressor, quality_cap
 
 logger = logging.getLogger(__name__)
+
+
+class DownloadCancelled(Exception):
+    pass
 
 
 class TaskManager:
@@ -23,8 +28,13 @@ class TaskManager:
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self._lock = asyncio.Lock()
 
-    async def create_task(self, request: DownloadRequest, client_id: str) -> DownloadTask:
-        """Create a new download task."""
+    async def create_task(self, request: DownloadRequest, client_id: str,
+                          client_ip: Optional[str] = None) -> DownloadTask:
+        """Create a new download task.
+
+        With compression, admission runs first (from yt-dlp metadata, before
+        anything is downloaded) and raises AdmissionRejected if it fails.
+        """
         task_id = str(uuid.uuid4())[:8]
 
         task = DownloadTask(
@@ -34,6 +44,15 @@ class TaskManager:
             status=TaskStatus.PENDING,
             created_at=datetime.now(),
         )
+
+        if request.compression is not None:
+            if request.audio_only or request.media_type != "video":
+                raise ValueError("Compression is only available for video downloads")
+            media = await asyncio.get_running_loop().run_in_executor(
+                None, ytdlp_wrapper.extract_info_cached, str(request.url))
+            task.title = request.title or media.title
+            compressor.admit(task, media, quality_cap(request.quality), request.compression,
+                             client_id, client_ip)
 
         async with self._lock:
             self.tasks[task_id] = task
@@ -64,10 +83,10 @@ class TaskManager:
             task.status = TaskStatus.PROCESSING
 
             # Use title from request if provided (e.g. carousel entries),
-            # otherwise extract it
+            # otherwise extract it (compression tasks already have it from admission)
             if request.title:
                 task.title = request.title
-            else:
+            elif not task.title:
                 try:
                     info = ytdlp_wrapper.extract_info(str(request.url))
                     task.title = info.title
@@ -76,6 +95,11 @@ class TaskManager:
 
             # Update status to downloading
             task.status = TaskStatus.DOWNLOADING
+
+            job = compressor.get(task_id)
+            if job:
+                self._download_for_compression(task, request, job)
+                return
 
             # Create progress hook
             def progress_hook(d):
@@ -144,6 +168,76 @@ class TaskManager:
             logger.error(f"Task {task_id} failed: {e}")
             task.status = TaskStatus.FAILED
             task.error = str(e)
+            compressor.release(task_id)  # no-op unless a compression job is still reserved
+
+    def _download_for_compression(self, task: DownloadTask, request: DownloadRequest, job):
+        """Download into the job's work dir and hand the file to the compression queue."""
+        max_bytes = settings.compression_max_input_file_mb * 1_000_000
+
+        def progress_hook(d):
+            if job.cancel.is_set():
+                raise DownloadCancelled()
+            if d["status"] == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                downloaded = d.get("downloaded_bytes", 0)
+                if max(total, downloaded) > max_bytes:
+                    raise ValueError(f"The source is larger than {settings.compression_max_input_file_mb} MB")
+                if total > 0:
+                    task.progress = (downloaded / total) * 100
+                task.speed = d.get("_speed_str", "")
+                task.eta = d.get("_eta_str", "")
+            elif d["status"] == "finished":
+                task.status = TaskStatus.MERGING
+                task.progress = 100
+
+        try:
+            if request.source_url and re.search(r'instagram\.com', str(request.url)):
+                filepath = ytdlp_wrapper.download_instagram_video(
+                    str(request.url),
+                    job.work_dir,
+                    source_url=request.source_url,
+                    title=task.title,
+                    progress_hook=progress_hook,
+                )
+            else:
+                # Exact formats chosen by the planner; the quality spec is only a fallback
+                fallback = YTDLPWrapper.get_format_for_quality(request.quality or "best")
+                spec = f"{job.source.format_spec}/{fallback}" if job.source.format_spec else fallback
+                filepath = ytdlp_wrapper.download(
+                    str(request.url),
+                    job.work_dir,
+                    format_spec=spec,
+                    progress_hook=progress_hook,
+                    convert_to_mp4=False,
+                    max_filesize=max_bytes,
+                )
+            if not Path(filepath).exists():
+                raise ValueError("Download produced no file (larger than the compression size limit?)")
+        except Exception as e:
+            compressor.release(task.task_id)
+            if job.cancel.is_set():
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = datetime.now()
+                logger.info(f"Task {task.task_id} cancelled during download")
+            else:
+                logger.error(f"Task {task.task_id} failed: {e}")
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
+            return
+
+        if job.cancel.is_set():
+            compressor.release(task.task_id)
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = datetime.now()
+            return
+        compressor.submit(task.task_id, Path(filepath))
+
+    async def cancel_task(self, task_id: str, client_id: str) -> bool:
+        """Cancel an active compression task (download, queue or encoding)."""
+        task = await self.get_task(task_id, client_id)
+        if not task or task.status in TERMINAL_STATUSES:
+            return False
+        return compressor.cancel(task_id)
 
     async def get_task(self, task_id: str, client_id: str) -> Optional[DownloadTask]:
         """Get task by ID, scoped to client."""
@@ -161,7 +255,7 @@ class TaskManager:
         return [
             t for t in self.tasks.values()
             if t.client_id == client_id
-            and t.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED]
+            and t.status not in TERMINAL_STATUSES
         ]
 
     async def delete_task(self, task_id: str, client_id: str) -> bool:
@@ -170,6 +264,9 @@ class TaskManager:
             task = self.tasks.get(task_id)
             if task and task.client_id == client_id:
                 del self.tasks[task_id]
+                # An invisible task must not keep encoding
+                if task.status not in TERMINAL_STATUSES:
+                    compressor.cancel(task_id)
                 return True
         return False
 
@@ -179,7 +276,7 @@ class TaskManager:
             self.tasks = {
                 k: v for k, v in self.tasks.items()
                 if not (v.client_id == client_id
-                        and v.status in [TaskStatus.COMPLETED, TaskStatus.FAILED])
+                        and v.status in TERMINAL_STATUSES)
             }
 
 

@@ -48,3 +48,5 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+
+server-setup.sh
