@@ -98,6 +98,7 @@ function App() {
         sourceUrl: options.sourceUrl,
         title: options.title,
         compression: options.compression,
+        trim: options.trim,
       });
       fetchTasks();
       return null;

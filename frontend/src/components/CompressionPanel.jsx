@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Shrink, Loader2, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import api from '../services/api';
-import TrimSlider, { formatClock } from './TrimSlider';
+import { trimFromOptions } from './TrimPanel';
 
 export const COMPRESSION_OFF = {
   enabled: false,
@@ -9,11 +9,11 @@ export const COMPRESSION_OFF = {
   customMb: '',
   overrides: {},
   resolution: null, // exact output short side; null = auto (best that fits)
-  trimMax: null, // longest clip that passed admission (UI only, not sent)
 };
 
-// Overrides that come from admission alternatives (not set directly by the user)
-const OVERRIDE_KEYS = ['max_height', 'prefer_h264', 'encoder_preset', 'trim_start', 'trim_end', 'deferred'];
+// Overrides that come from admission alternatives (not set directly by the user).
+// The trim range is not one of them: it belongs to the card's Trim option.
+const OVERRIDE_KEYS = ['max_height', 'prefer_h264', 'encoder_preset', 'deferred'];
 
 let presetsPromise = null;
 export function loadPresets() {
@@ -35,10 +35,10 @@ function formatSeconds(seconds) {
   return `${s}s`;
 }
 
-// Panel state -> CompressionOptions for the API (null when off/incomplete)
-export function buildCompressionOptions(value) {
+// Panel state + trim range -> CompressionOptions for the API (null when off/incomplete)
+export function buildCompressionOptions(value, trimRange) {
   if (!value.enabled) return null;
-  const options = { ...value.overrides };
+  const options = { ...value.overrides, ...trimRange };
   if (value.resolution) options.resolution = value.resolution;
   if (value.presetId && value.presetId !== 'custom') {
     options.preset_id = value.presetId;
@@ -62,7 +62,6 @@ function valueFromOptions(current, options) {
     customMb: options.preset_id ? current.customMb : String(options.target_size_mb ?? current.customMb),
     overrides,
     resolution: 'resolution' in options ? options.resolution ?? null : current.resolution,
-    trimMax: options.trim_end != null ? options.trim_end - (options.trim_start || 0) : null,
   };
 }
 
@@ -80,9 +79,6 @@ function describeOverrides(overrides) {
   if (overrides.max_height) parts.push(`${overrides.max_height}p`);
   if (overrides.prefer_h264) parts.push('H.264 source');
   if (overrides.encoder_preset) parts.push(`${overrides.encoder_preset} preset`);
-  if (overrides.trim_end != null) {
-    parts.push(`clip ${formatClock(overrides.trim_start || 0)}–${formatClock(overrides.trim_end)}`);
-  }
   if (overrides.deferred) parts.push('deferred');
   return parts.join(' · ');
 }
@@ -97,14 +93,18 @@ export function useCompressionConfig() {
   return config;
 }
 
+function sameRange(a, b) {
+  return (a?.trim_start || 0) === (b?.trim_start || 0) && (a?.trim_end ?? null) === (b?.trim_end ?? null);
+}
+
 export default function CompressionPanel({
-  url, duration, value, onChange, onStatusChange, disabled, rejection,
+  url, duration, value, onChange, trimRange, onTrimChange, onStatusChange, disabled, rejection,
 }) {
   const config = useCompressionConfig();
   const [estimate, setEstimate] = useState(null);
   const [checking, setChecking] = useState(false);
 
-  const options = buildCompressionOptions(value);
+  const options = buildCompressionOptions(value, trimRange);
   const optionsKey = JSON.stringify(options);
 
   // Dry-run admission whenever the request changes (debounced)
@@ -148,6 +148,12 @@ export default function CompressionPanel({
     });
   };
 
+  // Alternatives may also change the clip; that goes to the Trim option, capped at the admitted length
+  const applyAlternative = (altOptions) => {
+    onChange(valueFromOptions(value, altOptions));
+    if (!sameRange(altOptions, trimRange)) onTrimChange(trimFromOptions(altOptions, duration));
+  };
+
   // A rejection from /start (state changed since the estimate) takes precedence
   const verdict = rejection || estimate;
   const hasOverrides = Object.keys(value.overrides).length > 0;
@@ -172,7 +178,7 @@ export default function CompressionPanel({
           <>
             <select
               value={value.presetId || 'custom'}
-              onChange={(e) => onChange({ ...value, presetId: e.target.value, overrides: {}, trimMax: null })}
+              onChange={(e) => onChange({ ...value, presetId: e.target.value, overrides: {} })}
               disabled={disabled}
               className="px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded-lg
                          focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
@@ -193,7 +199,7 @@ export default function CompressionPanel({
                   step="0.1"
                   inputMode="decimal"
                   value={value.customMb}
-                  onChange={(e) => onChange({ ...value, customMb: e.target.value, overrides: {}, trimMax: null })}
+                  onChange={(e) => onChange({ ...value, customMb: e.target.value, overrides: {} })}
                   disabled={disabled}
                   placeholder="MB"
                   className="w-20 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg
@@ -207,7 +213,7 @@ export default function CompressionPanel({
               <span className="flex items-center gap-1 px-2 py-1 text-xs bg-slate-700 rounded">
                 {describeOverrides(value.overrides)}
                 <button
-                  onClick={() => onChange({ ...value, overrides: {}, trimMax: null })}
+                  onClick={() => onChange({ ...value, overrides: {} })}
                   className="text-slate-400 hover:text-white"
                   title="Reset adjustments"
                 >
@@ -218,22 +224,6 @@ export default function CompressionPanel({
           </>
         )}
       </div>
-
-      {value.enabled && options && value.trimMax && duration > 0 && value.overrides.trim_end != null && (
-        <div className="text-xs max-w-md">
-          <TrimSlider
-            duration={duration}
-            maxLength={value.trimMax}
-            start={value.overrides.trim_start || 0}
-            end={value.overrides.trim_end}
-            disabled={disabled}
-            onChange={(start, end) => onChange({
-              ...value,
-              overrides: { ...value.overrides, trim_start: start || undefined, trim_end: end },
-            })}
-          />
-        </div>
-      )}
 
       {value.enabled && options && (
         <div className="text-xs">
@@ -263,7 +253,7 @@ export default function CompressionPanel({
                   {verdict.alternatives.map((alt) => (
                     <button
                       key={`${alt.kind}-${alt.label}`}
-                      onClick={() => onChange(valueFromOptions(value, alt.options))}
+                      onClick={() => applyAlternative(alt.options)}
                       disabled={disabled}
                       className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-200
                                  transition-colors disabled:opacity-50"

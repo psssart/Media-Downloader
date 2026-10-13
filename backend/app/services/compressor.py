@@ -32,6 +32,7 @@ from ..config import settings
 from ..models import (
     CompressionOptions, CompressionResult, DownloadTask, MediaInfo, TaskStatus,
 )
+from .trimmer import clip_label
 from .compression_calibrator import ThroughputModel, read_cpu_times, steal_between
 from .compression_planner import (
     MB, EncodePlan, Evaluation, PlanError, PlannerConfig, QueueSnapshot, SourceVideo,
@@ -763,6 +764,8 @@ class Compressor:
         user_dir = self.cfg.downloads_dir / job.client_id
         user_dir.mkdir(parents=True, exist_ok=True)
         stem = f"{job.input_path.stem} [{job.label}]"
+        if job.target.trim_start or job.target.trim_end is not None:
+            stem += f" [{clip_label(job.target.trim_start, job.target.trim_end)}]"
         dest = user_dir / f"{stem}.mp4"
         n = 2
         while dest.exists():

@@ -1,6 +1,6 @@
 import {
   Loader2, CheckCircle2, XCircle, Clock, Download,
-  Trash2, RefreshCw, Merge, Hourglass, Shrink, Ban, X
+  Trash2, RefreshCw, Merge, Hourglass, Shrink, Ban, X, Scissors
 } from 'lucide-react';
 
 const TERMINAL = ['completed', 'failed', 'cancelled'];
@@ -30,6 +30,12 @@ const STATUS_CONFIG = {
     color: 'text-purple-400',
     bgColor: 'bg-purple-900/20',
     label: 'Merging'
+  },
+  trimming: {
+    icon: Scissors,
+    color: 'text-purple-400',
+    bgColor: 'bg-purple-900/20',
+    label: 'Trimming'
   },
   queued: {
     icon: Hourglass,
@@ -118,12 +124,12 @@ function TaskItem({ task, onDelete, onCancel }) {
           </div>
 
           {/* Progress bar */}
-          {['downloading', 'merging', 'compressing'].includes(task.status) && (
+          {['downloading', 'merging', 'trimming', 'compressing'].includes(task.status) && (
             <div className="mt-2">
               <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
                 <div
                   className={`h-full bg-primary-500 rounded-full transition-all duration-300
-                              ${task.status === 'merging' ? 'progress-animated' : ''}`}
+                              ${['merging', 'trimming'].includes(task.status) ? 'progress-animated' : ''}`}
                   style={{ width: `${task.progress}%` }}
                 />
               </div>

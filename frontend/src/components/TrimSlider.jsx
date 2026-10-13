@@ -1,4 +1,4 @@
-// Dual-thumb range for picking a clip of at most `maxLength` seconds.
+// Dual-thumb range for picking a clip of at most `maxLength` seconds (pass the duration for no limit).
 // Widening past the limit drags the other thumb along; pushing a thumb into
 // the other one slides the whole clip, keeping its length.
 
@@ -139,7 +139,8 @@ export default function TrimSlider({ duration, maxLength, start, end, onChange, 
           <TimeInput value={end} onCommit={moveEnd} maxDigits={maxDigits} disabled={disabled} label="Clip end time" />
         </span>
         <span>
-          {formatClock(end - start)} of max {formatClock(limit)}
+          {formatClock(end - start)}
+          {limit < duration ? ` of max ${formatClock(limit)}` : ` of ${formatClock(duration)}`}
         </span>
       </div>
     </div>

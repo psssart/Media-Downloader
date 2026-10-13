@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from datetime import datetime
@@ -9,6 +9,7 @@ class TaskStatus(str, Enum):
     PROCESSING = "processing"
     DOWNLOADING = "downloading"
     MERGING = "merging"
+    TRIMMING = "trimming"  # cutting the clip out of a download that isn't compressed
     QUEUED = "queued"  # downloaded, waiting for a compression slot
     COMPRESSING = "compressing"
     COMPLETED = "completed"
@@ -87,6 +88,20 @@ class DownloadRequest(BaseModel):
     source_url: Optional[str] = None
     title: Optional[str] = None
     compression: Optional[CompressionOptions] = None  # off unless set
+    # Keep only this part of the media (seconds). With compression the range is
+    # handed to the encoder (exact cut), otherwise the file is cut by stream copy.
+    trim_start: Optional[float] = Field(None, ge=0)
+    trim_end: Optional[float] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _check_trim(self):
+        if self.trim_end is not None and self.trim_end <= (self.trim_start or 0):
+            raise ValueError("trim_end must be after trim_start")
+        return self
+
+    @property
+    def has_trim(self) -> bool:
+        return bool(self.trim_start) or self.trim_end is not None
 
 
 class CompressionEstimateRequest(BaseModel):

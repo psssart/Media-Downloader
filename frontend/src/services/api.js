@@ -82,6 +82,8 @@ class ApiService {
         source_url: options.sourceUrl || null,
         title: options.title || null,
         compression: options.compression || null,
+        trim_start: options.trim?.trim_start ?? null,
+        trim_end: options.trim?.trim_end ?? null,
       }),
     });
   }

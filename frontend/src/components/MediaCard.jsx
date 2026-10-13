@@ -4,6 +4,7 @@ import api from '../services/api';
 import CompressionPanel, {
   COMPRESSION_OFF, buildCompressionOptions, useCompressionConfig,
 } from './CompressionPanel';
+import TrimPanel, { TRIM_OFF, buildTrimRange } from './TrimPanel';
 
 const QUALITY_OPTIONS = [
   { value: 'best', label: 'Best Available' },
@@ -466,6 +467,7 @@ function VideoCard({ media, onDownload, downloading }) {
   const [audioOnly, setAudioOnly] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [compression, setCompression] = useState(COMPRESSION_OFF);
+  const [trim, setTrim] = useState(TRIM_OFF);
   const [rejection, setRejection] = useState(null);
   const [compressionStatus, setCompressionStatus] = useState('off');
   const [autoHeight, setAutoHeight] = useState(null);
@@ -482,7 +484,9 @@ function VideoCard({ media, onDownload, downloading }) {
     setAutoHeight(height);
   }, []);
 
-  const compressionOptions = audioOnly ? null : buildCompressionOptions(compression);
+  // One range for both paths: sent on its own and, when compressing, inside the compression options
+  const trimRange = buildTrimRange(trim, media.duration);
+  const compressionOptions = audioOnly ? null : buildCompressionOptions(compression, trimRange);
   // With compression on, downloading is only possible once the settings pass admission
   const blocked = !audioOnly && compression.enabled && compressionStatus !== 'ok';
   const blockedReason = compressionStatus === 'checking'
@@ -491,6 +495,14 @@ function VideoCard({ media, onDownload, downloading }) {
 
   const handleCompressionChange = (value) => {
     setCompression(value);
+    setRejection(null);
+    // A length cap from an earlier "Trim to X" no longer matches the new settings
+    setTrim((t) => (t.maxLength == null ? t : { ...t, maxLength: null }));
+  };
+
+  // From the Trim option itself, or from a compression alternative that shortens the clip
+  const handleTrimChange = (value) => {
+    setTrim((t) => (value ? { ...t, ...value } : { ...t, enabled: false, maxLength: null }));
     setRejection(null);
   };
 
@@ -504,6 +516,7 @@ function VideoCard({ media, onDownload, downloading }) {
       sourceUrl: media.source_url,
       title: media.title,
       compression: compressionOptions,
+      trim: trimRange,
     });
     // Admission rejected: show the reason and alternatives next to the controls
     if (result?.rejection) setRejection(result.rejection);
@@ -513,7 +526,12 @@ function VideoCard({ media, onDownload, downloading }) {
     estimateFileSize(media.formats, quality, audioOnly, media.duration),
     `${quality}|${audioOnly}`,
   );
-  const estimatedSize = formatFileSize(sizeEstimate.bytes);
+  // Stream copy keeps the bitrate, so a clip is roughly its share of the whole
+  const trimmedBytes = sizeEstimate.bytes && trimRange && media.duration
+    ? Math.round(sizeEstimate.bytes
+      * ((trimRange.trim_end ?? media.duration) - (trimRange.trim_start || 0)) / media.duration)
+    : sizeEstimate.bytes;
+  const estimatedSize = formatFileSize(trimmedBytes);
 
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
@@ -689,7 +707,7 @@ function VideoCard({ media, onDownload, downloading }) {
                 />
               ) : estimatedSize && (
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${sizeBadgeClass(sizeEstimate.bytes)}`}
+                  className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${sizeBadgeClass(trimmedBytes)}`}
                   title="Estimated file size"
                 >
                   {estimatedSize}
@@ -732,11 +750,22 @@ function VideoCard({ media, onDownload, downloading }) {
               </span>
             </div>
 
+            <TrimPanel
+              duration={media.duration}
+              value={trim}
+              onChange={handleTrimChange}
+              compressing={compressing}
+              audioOnly={audioOnly}
+              disabled={downloading}
+            />
+
             <CompressionPanel
               url={media.webpage_url}
               duration={media.duration}
               value={compression}
               onChange={handleCompressionChange}
+              trimRange={trimRange}
+              onTrimChange={handleTrimChange}
               onStatusChange={handleCompressionStatus}
               disabled={audioOnly || downloading}
               rejection={rejection}

@@ -7,6 +7,7 @@ A self-hosted web application for downloading video and audio from YouTube, Inst
 - **Multi-platform Support**: Download from YouTube, Instagram, TikTok, Twitter/X, Facebook, Vimeo, Reddit, Twitch, and 1000+ more sites via yt-dlp
 - **Quality Selection**: Choose specific resolutions (4K, 1080p, 720p, etc.) or "Best Available"
 - **Audio Extraction**: Download audio-only in MP3 format
+- **Trim**: keep only part of a video or audio download (cut without re-encoding; frame-exact when combined with compression)
 - **Compression to a target size** (optional): fit a video into a platform limit (e.g. Discord 20 MB) or a custom size, with server-side admission control so a small server can't be overloaded
 - **Cookie Support**: Upload cookies.txt to access age-restricted or private content
 - **Background Downloads**: Non-blocking task queue for long downloads
@@ -71,6 +72,21 @@ Environment variables can be set in `.env` or passed to Docker:
 | `MD_MAX_CONCURRENT_DOWNLOADS` | 3 | Maximum parallel downloads |
 | `MD_DEBUG` | false | Enable debug mode |
 
+## Trim
+
+**Trim** on a video card keeps only the selected range (video, or the MP3 with
+Audio Only). The result is `<title> [0m30s-1m15s].<ext>`, so it never replaces
+a full download of the same video.
+
+- Without compression the file is downloaded to `downloads/.work/<task>/` and
+  cut with ffmpeg stream copy: no CPU cost, but a video clip starts at the
+  keyframe before the chosen start (usually 1–5 s earlier).
+- With compression the same range goes to the encoder instead (exact cut, no
+  second trim). Trim and Compress can be enabled in either order: the estimate
+  always uses the current range, and the 20-minute compression limit applies
+  to the clip, not the whole video. A "Trim to X" alternative from admission
+  sets the Trim range and caps its length while Compress stays on.
+
 ## Video compression
 
 Off by default. When a user enables **Compress** on a video and picks a preset
@@ -127,7 +143,7 @@ bitrate budget, not a quality/CRF setting).
    - If the result is over the target, only pass 2 is re-run with a lower bitrate,
      up to `MAX_RETRIES` times.
    - If the source already fits (H.264/AAC mp4, no trim), it is kept as is.
-5. **Result**: `<title> [<preset>].mp4` in the user's directory. The original is
+5. **Result**: `<title> [<preset>].mp4` (plus ` [<clip>]` when trimmed) in the user's directory. The original is
    not kept. The task reports the actual size against the target and the
    resolution used.
 

@@ -1,5 +1,6 @@
 import asyncio
 import re
+import shutil
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -11,6 +12,7 @@ from ..config import settings
 from ..models import DownloadTask, TaskStatus, DownloadRequest, TERMINAL_STATUSES
 from .ytdlp_wrapper import ytdlp_wrapper, YTDLPWrapper
 from .compressor import compressor, quality_cap
+from .trimmer import deliver_trimmed
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +47,16 @@ class TaskManager:
             created_at=datetime.now(),
         )
 
+        if request.has_trim and request.media_type != "video":
+            raise ValueError("Trimming is only available for video and audio downloads")
+
         if request.compression is not None:
             if request.audio_only or request.media_type != "video":
                 raise ValueError("Compression is only available for video downloads")
+            if request.has_trim:
+                # One range for both: the encoder cuts it exactly, nothing is trimmed afterwards
+                request.compression = request.compression.model_copy(
+                    update={"trim_start": request.trim_start, "trim_end": request.trim_end})
             media = await asyncio.get_running_loop().run_in_executor(
                 None, ytdlp_wrapper.extract_info_cached, str(request.url))
             task.title = request.title or media.title
@@ -77,6 +86,7 @@ class TaskManager:
         # Create per-user download directory
         user_dir = settings.downloads_dir / client_id
         user_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = None
 
         try:
             # Update status to processing
@@ -101,6 +111,14 @@ class TaskManager:
                 self._download_for_compression(task, request, job)
                 return
 
+            # A clip is downloaded aside (removed by compressor.cleanup_orphans if
+            # the server restarts meanwhile) and only the trimmed file reaches the user
+            out_dir = user_dir
+            if request.has_trim:
+                work_dir = compressor.work_dir / task_id
+                work_dir.mkdir(parents=True, exist_ok=True)
+                out_dir = work_dir
+
             # Create progress hook
             def progress_hook(d):
                 if d["status"] == "downloading":
@@ -122,7 +140,7 @@ class TaskManager:
             if request.media_type == "image":
                 filepath = ytdlp_wrapper.download_image(
                     str(request.url),
-                    user_dir,
+                    out_dir,
                     source_url=request.source_url,
                     title=task.title,
                     progress_hook=progress_hook,
@@ -130,14 +148,14 @@ class TaskManager:
             elif request.audio_only:
                 filepath = ytdlp_wrapper.download_audio(
                     str(request.url),
-                    user_dir,
+                    out_dir,
                     progress_hook=progress_hook,
                 )
             elif request.source_url and re.search(r'instagram\.com', str(request.url)):
                 # Instagram video with direct CDN URL from instaloader
                 filepath = ytdlp_wrapper.download_instagram_video(
                     str(request.url),
-                    user_dir,
+                    out_dir,
                     source_url=request.source_url,
                     title=task.title,
                     progress_hook=progress_hook,
@@ -151,10 +169,16 @@ class TaskManager:
 
                 filepath = ytdlp_wrapper.download(
                     str(request.url),
-                    user_dir,
+                    out_dir,
                     format_spec=format_spec,
                     progress_hook=progress_hook,
                 )
+
+            if work_dir:
+                task.status = TaskStatus.TRIMMING
+                task.speed = task.eta = None
+                filepath = deliver_trimmed(Path(filepath), work_dir, user_dir,
+                                           request.trim_start, request.trim_end)
 
             # Update task with completion info
             task.status = TaskStatus.COMPLETED
@@ -169,6 +193,9 @@ class TaskManager:
             task.status = TaskStatus.FAILED
             task.error = str(e)
             compressor.release(task_id)  # no-op unless a compression job is still reserved
+        finally:
+            if work_dir:
+                shutil.rmtree(work_dir, ignore_errors=True)
 
     def _download_for_compression(self, task: DownloadTask, request: DownloadRequest, job):
         """Download into the job's work dir and hand the file to the compression queue."""

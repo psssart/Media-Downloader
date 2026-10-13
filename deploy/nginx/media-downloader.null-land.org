@@ -70,8 +70,11 @@ server {
         proxy_pass http://media_downloader;
     }
 
-    # SPA (index.html + client-side routes)
+    # SPA (index.html + client-side routes). no-cache = revalidate via ETag/Last-Modified,
+    # so a deploy is picked up on the next load instead of after a heuristic expiry
     location / {
+        include snippets/security-headers.conf;
+        add_header Cache-Control "no-cache";
         proxy_pass http://media_downloader;
     }
 }
