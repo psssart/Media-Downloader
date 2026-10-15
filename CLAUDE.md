@@ -64,7 +64,7 @@ Tests needing ffmpeg are skipped where it is missing. No linter configuration ex
 ### Frontend (React 18, Vite 5, Tailwind CSS)
 
 - **App.jsx** — Main component holding all state. Polls tasks every 2s, files every 10s
-- **Components**: SearchBar, MediaCard (quality selector + audio-only toggle + TrimPanel + CompressionPanel), TrimPanel (Trim toggle + TrimSlider; owns the clip range for both plain and compressed downloads), CompressionPanel (preset/custom MB, debounced estimate, alternatives, reports status that gates the Download button), TrimSlider (dual range; clip length capped at X after a "Trim to X" compression alternative), TaskList (active/completed with progress, queue position, cancel, compression report), FileList (with thumbnails), SettingsPanel (cookie management modal)
+- **Components**: SearchBar, MediaCard (quality selector + audio-only toggle + TrimPanel + CompressionPanel), TrimPanel (Trim toggle + TrimSlider; owns the clip range for both plain and compressed downloads), CompressionPanel (preset/custom MB, debounced estimate, alternatives, reports status that gates the Download button), TrimSlider (dual range; clip length capped at X after a "Trim to X" compression alternative), TaskList (active tasks with progress, queue position, cancel; App removes finished tasks automatically, failed ones after 15s), FileList (with thumbnails; resolution of compressed files, kept by App in localStorage `md_compression_reports`), SettingsPanel (cookie management modal)
 - **api.js** — Singleton ApiService class wrapping all backend endpoints with fetch. Generates per-client UUID (localStorage + cookie) and sends `X-Client-ID` header on all requests
 - **PWA** enabled via vite-plugin-pwa with network-first API caching and offline support
 

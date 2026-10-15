@@ -9,15 +9,6 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function formatDate(dateString) {
-  return new Date(dateString).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function getFileIcon(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   if (['mp4', 'webm', 'mkv', 'avi', 'mov'].includes(ext)) {
@@ -32,7 +23,7 @@ function getFileIcon(filename) {
   return File;
 }
 
-function FileItem({ file, onDelete }) {
+function FileItem({ file, report, onDelete }) {
   const FileIcon = getFileIcon(file.filename);
 
   const handleDownload = () => {
@@ -62,11 +53,13 @@ function FileItem({ file, onDelete }) {
           {file.filename}
         </p>
         <p className="text-sm text-slate-500">
-          {formatFileSize(file.size)} • {formatDate(file.created_at)}
+          {formatFileSize(file.size)}
+          {/* Resolution of a compressed file */}
+          {report && ` • ${report.width}×${report.height}`}
         </p>
       </div>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center gap-1">
         <button
           onClick={handleDownload}
           className="p-2 text-slate-400 hover:text-primary-400 transition-colors"
@@ -86,7 +79,7 @@ function FileItem({ file, onDelete }) {
   );
 }
 
-export default function FileList({ files, stats, onDelete, onRefresh }) {
+export default function FileList({ files, stats, reports = {}, onDelete, onRefresh }) {
   if (files.length === 0) {
     return (
       <div className="text-center py-8 text-slate-500">
@@ -115,6 +108,7 @@ export default function FileList({ files, stats, onDelete, onRefresh }) {
           <FileItem
             key={file.filename}
             file={file}
+            report={reports[file.filename]}
             onDelete={onDelete}
           />
         ))}

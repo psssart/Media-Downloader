@@ -1,6 +1,6 @@
 import {
   Loader2, CheckCircle2, XCircle, Clock, Download,
-  Trash2, RefreshCw, Merge, Hourglass, Shrink, Ban, X, Scissors
+  RefreshCw, Merge, Hourglass, Shrink, Ban, X, Scissors
 } from 'lucide-react';
 
 const TERMINAL = ['completed', 'failed', 'cancelled'];
@@ -79,11 +79,10 @@ function statusLabel(task, config) {
   return config.label;
 }
 
-function TaskItem({ task, onDelete, onCancel }) {
+function TaskItem({ task, onCancel }) {
   const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
   const StatusIcon = config.icon;
-  const result = task.compression_result;
-  const cancellable = task.compression_target_mb != null && !TERMINAL.includes(task.status);
+  const cancellable = !TERMINAL.includes(task.status);
 
   return (
     <div className={`p-4 rounded-lg border border-slate-700 ${config.bgColor}`}>
@@ -114,13 +113,6 @@ function TaskItem({ task, onDelete, onCancel }) {
                 <X className="w-4 h-4" />
               </button>
             )}
-            <button
-              onClick={() => onDelete(task.task_id)}
-              className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-              title="Remove task"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
           </div>
 
           {/* Progress bar */}
@@ -145,32 +137,14 @@ function TaskItem({ task, onDelete, onCancel }) {
               Error: {task.error}
             </p>
           )}
-
-          {/* Completed file */}
-          {task.status === 'completed' && task.filename && (
-            <p className="mt-1 text-sm text-green-400 truncate">
-              ✓ {task.filename}
-            </p>
-          )}
-
-          {/* Compression report: actual size vs target, applied resolution */}
-          {task.status === 'completed' && result && (
-            <p className="text-xs text-slate-400">
-              {result.actual_mb} / {result.target_mb} MB · {result.width}×{result.height}
-              {result.passthrough && ' · already fit, kept as is'}
-              {result.retries > 0 && ` · ${result.retries} retr${result.retries > 1 ? 'ies' : 'y'}`}
-            </p>
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-export default function TaskList({ tasks, onDelete, onCancel, onClearCompleted, onRefresh }) {
-  const activeTasks = tasks.filter(t => !TERMINAL.includes(t.status));
-  const completedTasks = tasks.filter(t => TERMINAL.includes(t.status));
-
+// Finished tasks are removed by App; only active ones and recent failures arrive here
+export default function TaskList({ tasks, onCancel, onRefresh }) {
   if (tasks.length === 0) {
     return null;
   }
@@ -179,45 +153,20 @@ export default function TaskList({ tasks, onDelete, onCancel, onClearCompleted, 
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Downloads</h3>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onRefresh}
-            className="p-2 text-slate-400 hover:text-white transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          {completedTasks.length > 0 && (
-            <button
-              onClick={onClearCompleted}
-              className="text-sm text-slate-400 hover:text-white transition-colors"
-            >
-              Clear completed
-            </button>
-          )}
-        </div>
+        <button
+          onClick={onRefresh}
+          className="p-2 text-slate-400 hover:text-white transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Active tasks */}
-      {activeTasks.length > 0 && (
-        <div className="space-y-2">
-          {activeTasks.map((task) => (
-            <TaskItem key={task.task_id} task={task} onDelete={onDelete} onCancel={onCancel} />
-          ))}
-        </div>
-      )}
-
-      {/* Completed tasks */}
-      {completedTasks.length > 0 && (
-        <div className="space-y-2">
-          {activeTasks.length > 0 && (
-            <p className="text-sm text-slate-500 mt-4">Completed</p>
-          )}
-          {completedTasks.map((task) => (
-            <TaskItem key={task.task_id} task={task} onDelete={onDelete} onCancel={onCancel} />
-          ))}
-        </div>
-      )}
+      <div className="space-y-2">
+        {tasks.map((task) => (
+          <TaskItem key={task.task_id} task={task} onCancel={onCancel} />
+        ))}
+      </div>
     </div>
   );
 }

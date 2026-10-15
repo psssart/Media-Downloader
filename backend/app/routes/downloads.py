@@ -98,9 +98,9 @@ async def get_compression_stats():
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str, client_id: str = Depends(get_client_id)):
-    """Cancel an active compression task."""
+    """Cancel an active download or compression task."""
     if not await task_manager.cancel_task(task_id, client_id):
-        raise HTTPException(status_code=404, detail="No active compression task with this ID")
+        raise HTTPException(status_code=404, detail="No active task with this ID")
     return {"message": "Task cancelled"}
 
 

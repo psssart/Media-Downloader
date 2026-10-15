@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Download, Settings, AlertCircle, RefreshCw } from 'lucide-react';
 import SearchBar from './components/SearchBar';
 import MediaCard from './components/MediaCard';
@@ -6,6 +6,28 @@ import TaskList from './components/TaskList';
 import FileList from './components/FileList';
 import SettingsPanel from './components/SettingsPanel';
 import api from './services/api';
+
+// Finished tasks leave the list on their own; a failure stays long enough to read the error
+const FAILED_VISIBLE_MS = 15000;
+
+// Compression reports of finished tasks, shown next to their files (kept per browser)
+const REPORTS_KEY = 'md_compression_reports';
+
+function loadReports() {
+  try {
+    return JSON.parse(localStorage.getItem(REPORTS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReports(reports) {
+  try {
+    localStorage.setItem(REPORTS_KEY, JSON.stringify(reports));
+  } catch {
+    // storage unavailable: reports live until reload
+  }
+}
 
 function App() {
   const [media, setMedia] = useState(null);
@@ -18,14 +40,15 @@ function App() {
   const [error, setError] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Fetch tasks periodically
-  const fetchTasks = useCallback(async () => {
-    try {
-      const data = await api.getTasks();
-      setTasks(data);
-    } catch (err) {
-      console.error('Failed to fetch tasks:', err);
-    }
+  const [reports, setReports] = useState(loadReports);
+  const dismissed = useRef(new Set());
+
+  const updateReports = useCallback((update) => {
+    setReports(prev => {
+      const next = update(prev);
+      if (next !== prev) saveReports(next);
+      return next;
+    });
   }, []);
 
   // Fetch files
@@ -37,10 +60,48 @@ function App() {
       ]);
       setFiles(filesData);
       setStats(statsData);
+      // Forget reports of files that are gone (the grace period covers a listing
+      // fetched just before the task finished)
+      const names = new Set(filesData.map(f => f.filename));
+      updateReports(prev => {
+        const stale = Object.keys(prev).filter(
+          name => !names.has(name) && Date.now() - prev[name].at > 60000);
+        if (stale.length === 0) return prev;
+        const next = { ...prev };
+        stale.forEach(name => delete next[name]);
+        return next;
+      });
     } catch (err) {
       console.error('Failed to fetch files:', err);
     }
-  }, []);
+  }, [updateReports]);
+
+  // Fetch tasks periodically; finished ones are removed from the server and the list
+  const fetchTasks = useCallback(async () => {
+    try {
+      const data = await api.getTasks();
+      let completed = false;
+      for (const task of data) {
+        if (!['completed', 'failed', 'cancelled'].includes(task.status)) continue;
+        if (dismissed.current.has(task.task_id)) continue;
+        dismissed.current.add(task.task_id);
+        if (task.status === 'completed') completed = true;
+        if (task.status === 'completed' && task.compression_result && task.filename) {
+          updateReports(prev => ({
+            ...prev, [task.filename]: { ...task.compression_result, at: Date.now() },
+          }));
+        }
+        setTimeout(() => {
+          api.deleteTask(task.task_id).catch(() => {});
+          setTasks(prev => prev.filter(t => t.task_id !== task.task_id));
+        }, task.status === 'failed' ? FAILED_VISIBLE_MS : 0);
+      }
+      setTasks(data.filter(t => !['completed', 'cancelled'].includes(t.status)));
+      if (completed) fetchFiles();
+    } catch (err) {
+      console.error('Failed to fetch tasks:', err);
+    }
+  }, [fetchFiles, updateReports]);
 
   // Fetch settings
   const fetchSettings = useCallback(async () => {
@@ -112,33 +173,13 @@ function App() {
     }
   };
 
-  // Handle task cancellation (compression tasks)
+  // Handle task cancellation
   const handleCancelTask = async (taskId) => {
     try {
       await api.cancelTask(taskId);
       fetchTasks();
     } catch (err) {
       console.error('Failed to cancel task:', err);
-    }
-  };
-
-  // Handle task deletion
-  const handleDeleteTask = async (taskId) => {
-    try {
-      await api.deleteTask(taskId);
-      fetchTasks();
-    } catch (err) {
-      console.error('Failed to delete task:', err);
-    }
-  };
-
-  // Handle clear completed
-  const handleClearCompleted = async () => {
-    try {
-      await api.clearCompletedTasks();
-      fetchTasks();
-    } catch (err) {
-      console.error('Failed to clear tasks:', err);
     }
   };
 
@@ -211,9 +252,7 @@ function App() {
           <section className="bg-slate-800/50 rounded-xl p-6 border border-slate-700 min-w-0">
             <TaskList
               tasks={tasks}
-              onDelete={handleDeleteTask}
               onCancel={handleCancelTask}
-              onClearCompleted={handleClearCompleted}
               onRefresh={fetchTasks}
             />
             {tasks.length === 0 && (
@@ -230,6 +269,7 @@ function App() {
             <FileList
               files={files}
               stats={stats}
+              reports={reports}
               onDelete={handleDeleteFile}
               onRefresh={fetchFiles}
             />

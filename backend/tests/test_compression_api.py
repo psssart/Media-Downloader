@@ -173,6 +173,20 @@ def test_cancel_during_download(client, stub_download):
     assert not (compressor.work_dir / task_id).exists()
 
 
+
+@requires_ffmpeg
+def test_cancel_plain_download(client, stub_download):
+    stub_download["delay"] = 0.3
+    r = client.post("/api/downloads/start", headers=HEADERS,
+                    json={"url": "https://example.com/watch?v=abc", "title": "Stub video"})
+    task_id = r.json()["task_id"]
+    time.sleep(0.5)
+    assert client.post(f"/api/downloads/tasks/{task_id}/cancel", headers=HEADERS).status_code == 200
+    task = wait_task(client, task_id)
+    assert task["status"] == "cancelled" and not task["error"]
+    assert client.post(f"/api/downloads/tasks/{task_id}/cancel", headers=HEADERS).status_code == 404
+    assert not any(f.filename == "Stub video.mp4" for f in file_manager.get_files(CLIENT))
+
 @requires_ffmpeg
 def test_api_stays_responsive_while_encoding(client, tmp_path):
     """Smoke check; the real check is deploy/loadtest on the target server."""

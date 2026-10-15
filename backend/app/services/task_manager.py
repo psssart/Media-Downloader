@@ -1,6 +1,7 @@
 import asyncio
 import re
 import shutil
+import threading
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -28,6 +29,8 @@ class TaskManager:
         self.max_workers = max_workers or settings.max_concurrent_downloads
         self.tasks: Dict[str, DownloadTask] = {}
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        # Cancel flags of plain (non-compression) downloads, set by cancel_task
+        self._cancel_events: Dict[str, threading.Event] = {}
         self._lock = asyncio.Lock()
 
     async def create_task(self, request: DownloadRequest, client_id: str,
@@ -65,6 +68,8 @@ class TaskManager:
 
         async with self._lock:
             self.tasks[task_id] = task
+            if request.compression is None:
+                self._cancel_events[task_id] = threading.Event()
 
         # Start background download
         asyncio.get_event_loop().run_in_executor(
@@ -87,6 +92,8 @@ class TaskManager:
         user_dir = settings.downloads_dir / client_id
         user_dir.mkdir(parents=True, exist_ok=True)
         work_dir = None
+        cancel = self._cancel_events.get(task_id)
+        partial_files: set[str] = set()
 
         try:
             # Update status to processing
@@ -119,8 +126,16 @@ class TaskManager:
                 work_dir.mkdir(parents=True, exist_ok=True)
                 out_dir = work_dir
 
+            if cancel and cancel.is_set():
+                raise DownloadCancelled()
+
             # Create progress hook
             def progress_hook(d):
+                for key in ("tmpfilename", "filename"):
+                    if d.get(key):
+                        partial_files.add(d[key])
+                if cancel and cancel.is_set():
+                    raise DownloadCancelled()
                 if d["status"] == "downloading":
                     # Parse progress
                     total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
@@ -174,6 +189,10 @@ class TaskManager:
                     progress_hook=progress_hook,
                 )
 
+            if cancel and cancel.is_set():
+                partial_files.add(str(filepath))
+                raise DownloadCancelled()
+
             if work_dir:
                 task.status = TaskStatus.TRIMMING
                 task.speed = task.eta = None
@@ -189,11 +208,21 @@ class TaskManager:
             logger.info(f"Task {task_id} completed: {task.filename}")
 
         except Exception as e:
-            logger.error(f"Task {task_id} failed: {e}")
-            task.status = TaskStatus.FAILED
-            task.error = str(e)
+            if cancel and cancel.is_set():
+                logger.info(f"Task {task_id} cancelled")
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = datetime.now()
+                # Partial and already merged files in the user's directory
+                for name in partial_files:
+                    Path(name).unlink(missing_ok=True)
+                    Path(name + ".part").unlink(missing_ok=True)
+            else:
+                logger.error(f"Task {task_id} failed: {e}")
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
             compressor.release(task_id)  # no-op unless a compression job is still reserved
         finally:
+            self._cancel_events.pop(task_id, None)
             if work_dir:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -260,10 +289,15 @@ class TaskManager:
         compressor.submit(task.task_id, Path(filepath))
 
     async def cancel_task(self, task_id: str, client_id: str) -> bool:
-        """Cancel an active compression task (download, queue or encoding)."""
+        """Cancel an active task: a plain download, or a compression task
+        (download, queue or encoding)."""
         task = await self.get_task(task_id, client_id)
         if not task or task.status in TERMINAL_STATUSES:
             return False
+        cancel = self._cancel_events.get(task_id)
+        if cancel:
+            cancel.set()  # the download thread stops at its next progress update
+            return True
         return compressor.cancel(task_id)
 
     async def get_task(self, task_id: str, client_id: str) -> Optional[DownloadTask]:
@@ -293,7 +327,10 @@ class TaskManager:
                 del self.tasks[task_id]
                 # An invisible task must not keep encoding
                 if task.status not in TERMINAL_STATUSES:
-                    compressor.cancel(task_id)
+                    if task_id in self._cancel_events:
+                        self._cancel_events[task_id].set()
+                    else:
+                        compressor.cancel(task_id)
                 return True
         return False
 
