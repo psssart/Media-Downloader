@@ -526,10 +526,12 @@ class YTDLPWrapper:
             "format": format_spec or settings.default_format,
             "merge_output_format": "mp4" if convert_to_mp4 else "mp4/mkv",
             "writethumbnail": True,
-            "postprocessors": [{
-                "key": "FFmpegVideoConvertor",
-                "preferedformat": "mp4",
-            }] if convert_to_mp4 else [],
+            "postprocessors": [
+                *([{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}] if convert_to_mp4 else []),
+                # Tags for credits: artist=uploader, purl/comment=webpage_url, date, title.
+                # Survive trimming (-c copy) and compression (global metadata is kept).
+                {"key": "FFmpegMetadata", "add_metadata": True},
+            ],
             "quiet": False,
             "no_warnings": False,
         })
@@ -578,6 +580,9 @@ class YTDLPWrapper:
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
+            }, {
+                "key": "FFmpegMetadata",
+                "add_metadata": True,
             }],
             "quiet": False,
         })
