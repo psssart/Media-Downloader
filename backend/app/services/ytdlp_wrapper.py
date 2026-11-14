@@ -1,4 +1,6 @@
+import os
 import re
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -6,6 +8,8 @@ import urllib.request
 import http.cookiejar
 
 import yt_dlp
+from datetime import datetime, timezone
+from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 from typing import Optional, Dict, Any, Callable
 from pathlib import Path
 import logging
@@ -24,6 +28,17 @@ _INFO_CACHE_MAX = 64
 _COOKIE_REQUIRED_PATTERNS = [
     (r'facebook\.com|fb\.watch', 'Facebook'),
     (r'instagram\.com', 'Instagram'),
+]
+
+# Credits tags: artist=uploader, comment/purl=webpage_url, title, date (+description).
+# The empty meta_synopsis drops the "synopsis" tag, a duplicate of "description".
+_METADATA_POSTPROCESSORS = [
+    {
+        "key": "MetadataParser",
+        "when": "pre_process",
+        "actions": [(MetadataParserPP.Actions.INTERPRET, "", "(?P<meta_synopsis>)")],
+    },
+    {"key": "FFmpegMetadata", "add_metadata": True},
 ]
 
 
@@ -92,8 +107,9 @@ class YTDLPWrapper:
         match = re.search(r'instagram\.com/(?:p|reel|reels)/([A-Za-z0-9_-]+)', url)
         return match.group(1) if match else None
 
-    def _extract_instagram_graphql(self, url: str, shortcode: str) -> MediaInfo:
-        """Extract Instagram post data via the public GraphQL API (no login needed)."""
+    @staticmethod
+    def _instagram_graphql_item(shortcode: str) -> Dict[str, Any]:
+        """Fetch a post via the public GraphQL API (no login needed)."""
         import json as json_mod
 
         gql_url = "https://www.instagram.com/api/graphql"
@@ -123,6 +139,11 @@ class YTDLPWrapper:
         item = data.get("data", {}).get("xdt_shortcode_media")
         if not item:
             raise ValueError("Instagram GraphQL returned no data for this post")
+        return item
+
+    def _extract_instagram_graphql(self, url: str, shortcode: str) -> MediaInfo:
+        """Extract Instagram post data via the public GraphQL API (no login needed)."""
+        item = self._instagram_graphql_item(shortcode)
 
         caption_edges = item.get("edge_media_to_caption", {}).get("edges", [])
         caption = caption_edges[0]["node"]["text"] if caption_edges else ""
@@ -528,9 +549,8 @@ class YTDLPWrapper:
             "writethumbnail": True,
             "postprocessors": [
                 *([{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}] if convert_to_mp4 else []),
-                # Tags for credits: artist=uploader, purl/comment=webpage_url, date, title.
-                # Survive trimming (-c copy) and compression (global metadata is kept).
-                {"key": "FFmpegMetadata", "add_metadata": True},
+                # Survive trimming (-c copy) and compression (global metadata is kept)
+                *_METADATA_POSTPROCESSORS,
             ],
             "quiet": False,
             "no_warnings": False,
@@ -580,10 +600,7 @@ class YTDLPWrapper:
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
-            }, {
-                "key": "FFmpegMetadata",
-                "add_metadata": True,
-            }],
+            }, *_METADATA_POSTPROCESSORS],
             "quiet": False,
         })
 
@@ -624,9 +641,10 @@ class YTDLPWrapper:
         if progress_hook:
             progress_hook({"status": "downloading", "downloaded_bytes": 0, "total_bytes": 0})
 
+        shortcode = self._extract_instagram_shortcode(url)
         video_url = source_url
+        meta: Optional[Dict[str, Any]] = None
         if not video_url:
-            shortcode = self._extract_instagram_shortcode(url)
             if not shortcode:
                 raise ValueError("Could not extract Instagram shortcode from URL")
             try:
@@ -636,6 +654,12 @@ class YTDLPWrapper:
                 video_url = post.video_url
                 if not title:
                     title = (post.caption.split('\n')[0][:100]) if post.caption else shortcode
+                meta = {
+                    "username": post.owner_username,
+                    "caption": post.caption or "",
+                    "date": post.date_utc.replace(tzinfo=timezone.utc) if post.date_utc else None,
+                    "is_reel": post._node.get("product_type") == "clips",
+                }
             except ValueError:
                 raise
             except Exception as e:
@@ -681,11 +705,66 @@ class YTDLPWrapper:
             logger.error(f"Instagram video download failed: {e}")
             raise ValueError(f"Instagram video download failed: {e}")
 
+        if shortcode:
+            if meta is None:
+                meta = self._instagram_post_meta(shortcode)
+            self._tag_instagram_video(filepath, url, shortcode, meta, title)
+
         if progress_hook:
             progress_hook({"status": "finished", "filename": str(filepath)})
 
         logger.info(f"Instagram video downloaded: {filepath}")
         return str(filepath)
+
+    def _instagram_post_meta(self, shortcode: str) -> Optional[Dict[str, Any]]:
+        """Uploader, caption, date and reel flag of a post, for the credits tags."""
+        try:
+            item = self._instagram_graphql_item(shortcode)
+        except Exception as e:
+            logger.warning(f"Instagram metadata lookup failed for {shortcode}: {e}")
+            return None
+        edges = item.get("edge_media_to_caption", {}).get("edges", [])
+        ts = item.get("taken_at_timestamp")
+        return {
+            "username": (item.get("owner") or {}).get("username"),
+            "caption": edges[0]["node"]["text"] if edges else "",
+            "date": datetime.fromtimestamp(ts, timezone.utc) if ts else None,
+            "is_reel": item.get("product_type") == "clips",
+        }
+
+    @staticmethod
+    def _tag_instagram_video(filepath: Path, url: str, shortcode: str,
+                             meta: Optional[Dict[str, Any]], fallback_title: Optional[str]) -> None:
+        """Write the same credits tags yt-dlp's FFmpegMetadata does (stream copy, atomic replace).
+
+        Best effort: on any failure the untagged file is kept.
+        """
+        meta = meta or {}
+        is_reel = meta.get("is_reel") or re.search(r'instagram\.com/reels?/', url) is not None
+        caption = meta.get("caption") or ""
+        tags = {
+            "artist": meta.get("username"),
+            "comment": f"https://www.instagram.com/{'reel' if is_reel else 'p'}/{shortcode}/",
+            "title": caption.split('\n')[0][:100] if caption.strip() else fallback_title,
+            "date": meta["date"].strftime("%Y%m%d") if meta.get("date") else None,
+        }
+        # Dot-prefixed: skipped by file listing and cleanup while it exists
+        tmp = filepath.with_name(f".{filepath.stem}.tagging{filepath.suffix}")
+        args = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+                "-i", str(filepath), "-map", "0:v?", "-map", "0:a?", "-c", "copy",
+                "-map_metadata", "0"]
+        for key, value in tags.items():
+            if value:
+                args += ["-metadata", f"{key}={value.replace(chr(0), '')}"]
+        args += ["-movflags", "+faststart", str(tmp)]
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=300)
+            if proc.returncode != 0 or not tmp.exists():
+                raise RuntimeError(proc.stderr.decode(errors="replace")[-400:])
+            os.replace(tmp, filepath)
+        except Exception as e:
+            logger.warning(f"Could not tag Instagram video {filepath.name}: {e}")
+            tmp.unlink(missing_ok=True)
 
     def download_image(
         self,
