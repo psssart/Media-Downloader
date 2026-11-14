@@ -717,19 +717,48 @@ class YTDLPWrapper:
         return str(filepath)
 
     def _instagram_post_meta(self, shortcode: str) -> Optional[Dict[str, Any]]:
-        """Uploader, caption, date and reel flag of a post, for the credits tags."""
+        """Uploader, caption, date and reel flag of a post, for the credits tags.
+
+        GraphQL first (cheap, has product_type), then yt-dlp: GraphQL is
+        rate-limited per IP, and this path runs when yt-dlp's download failed,
+        which doesn't mean its metadata extraction does.
+        """
         try:
             item = self._instagram_graphql_item(shortcode)
+            edges = item.get("edge_media_to_caption", {}).get("edges", [])
+            ts = item.get("taken_at_timestamp")
+            return {
+                "username": (item.get("owner") or {}).get("username"),
+                "caption": edges[0]["node"]["text"] if edges else "",
+                "date": datetime.fromtimestamp(ts, timezone.utc) if ts else None,
+                "is_reel": item.get("product_type") == "clips",
+            }
         except Exception as e:
-            logger.warning(f"Instagram metadata lookup failed for {shortcode}: {e}")
+            logger.warning(f"Instagram GraphQL metadata lookup failed for {shortcode}, trying yt-dlp: {e}")
+
+        try:
+            opts = self._get_base_opts()
+            opts.update({"skip_download": True, "noplaylist": True})
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"https://www.instagram.com/p/{shortcode}/", download=False)
+        except Exception as e:
+            logger.warning(f"Instagram yt-dlp metadata lookup failed for {shortcode}: {e}")
             return None
-        edges = item.get("edge_media_to_caption", {}).get("edges", [])
-        ts = item.get("taken_at_timestamp")
+        if not info:
+            return None
+        # Carousels come back as a playlist: owner/date may only be on the entries
+        first = next((e for e in info.get("entries") or [] if e), {})
+        pick = lambda *keys: next((src[k] for k in keys for src in (info, first) if src.get(k)), None)
+        ts = pick("timestamp")
+        day = pick("upload_date")
+        date = (datetime.fromtimestamp(ts, timezone.utc) if ts
+                else datetime.strptime(day, "%Y%m%d").replace(tzinfo=timezone.utc) if day else None)
         return {
-            "username": (item.get("owner") or {}).get("username"),
-            "caption": edges[0]["node"]["text"] if edges else "",
-            "date": datetime.fromtimestamp(ts, timezone.utc) if ts else None,
-            "is_reel": item.get("product_type") == "clips",
+            # channel is the @username; uploader is the display name
+            "username": pick("channel", "uploader_id", "uploader"),
+            "caption": pick("description") or "",
+            "date": date,
+            "is_reel": False,  # yt-dlp doesn't say; the original URL decides
         }
 
     @staticmethod
