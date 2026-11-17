@@ -127,6 +127,25 @@ def test_plain_trim(client, stub_download):
 
 
 @requires_ffmpeg
+def test_plain_download_is_moved_in_when_finished(client, stub_download):
+    # A file from an earlier download of the same video is kept
+    user_file("Stub video.mp4").parent.mkdir(parents=True, exist_ok=True)
+    user_file("Stub video.mp4").write_bytes(b"earlier")
+    r = client.post("/api/downloads/start", headers=HEADERS, json={"url": URL})
+    task = wait_task(client, r.json()["task_id"])
+    assert task["status"] == "completed", task
+    assert task["filename"] == "Stub video (2).mp4"
+    assert user_file("Stub video.mp4").read_bytes() == b"earlier"
+    assert user_file("Stub video (2).jpg").exists()  # thumbnail follows the file
+    # Partial and intermediate files never reach the user's directory
+    assert stub_download["output_path"].parent == compressor.work_dir
+    assert not stub_download["output_path"].exists()
+    for name in ("Stub video.mp4", "Stub video (2).mp4"):
+        user_file(name).unlink()
+    user_file("Stub video (2).jpg").unlink()
+
+
+@requires_ffmpeg
 def test_trim_outside_video_fails(client, stub_download):
     r = client.post("/api/downloads/start", headers=HEADERS, json={"url": URL, "trim_start": 60})
     task = wait_task(client, r.json()["task_id"])

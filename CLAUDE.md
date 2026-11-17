@@ -58,7 +58,7 @@ Tests needing ffmpeg are skipped where it is missing. No linter configuration ex
 - `compression_planner.py` — Pure functions (no I/O): bitrate budget, resolution ladder, source format choice, cost/RAM estimates, admission, alternatives. Unit-tested
 - `compression_calibrator.py` — Throughput model: startup calibration, refinement from finished jobs, CPU-steal correction; state in `downloads/.compression/`
 - `compressor.py` — Singleton. Admission + reservations, priority queue, worker threads running sandboxed two-pass ffmpeg (nice/ionice/prlimit/oom_score_adj, process-group kill), cleanup of `downloads/.work/`, metrics. Started/stopped in `main.py` lifespan; `tick()` runs every 15s
-- `trimmer.py` — Stream-copy trim for non-compressed downloads (`deliver_trimmed`: cut in `downloads/.work/<task_id>/`, move as `<title> [<clip>]` with thumbnail) and `clip_label` for file names
+- `trimmer.py` — `deliver` (move a finished file + thumbnail from `downloads/.work/<task_id>/` into the user dir, ` (n)` on name clash), stream-copy trim for non-compressed downloads (`deliver_trimmed`: cut in the work dir, deliver as `<title> [<clip>]`) and `clip_label` for file names. All downloads go to the work dir first so partial/intermediate files never appear in the file list
 - `file_manager.py` — Singleton. Per-user file listing in `downloads/{client_id}/` subdirectories, secure path resolution (traversal protection), thumbnail management, scheduled cleanup of old files + empty user dirs, storage stats
 
 ### Frontend (React 18, Vite 5, Tailwind CSS)

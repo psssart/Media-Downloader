@@ -13,7 +13,7 @@ from ..config import settings
 from ..models import DownloadTask, TaskStatus, DownloadRequest, TERMINAL_STATUSES
 from .ytdlp_wrapper import ytdlp_wrapper, YTDLPWrapper
 from .compressor import compressor, quality_cap
-from .trimmer import deliver_trimmed
+from .trimmer import deliver, deliver_trimmed
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,6 @@ class TaskManager:
         user_dir.mkdir(parents=True, exist_ok=True)
         work_dir = None
         cancel = self._cancel_events.get(task_id)
-        partial_files: set[str] = set()
 
         try:
             # Update status to processing
@@ -118,22 +117,18 @@ class TaskManager:
                 self._download_for_compression(task, request, job)
                 return
 
-            # A clip is downloaded aside (removed by compressor.cleanup_orphans if
-            # the server restarts meanwhile) and only the trimmed file reaches the user
-            out_dir = user_dir
-            if request.has_trim:
-                work_dir = compressor.work_dir / task_id
-                work_dir.mkdir(parents=True, exist_ok=True)
-                out_dir = work_dir
+            # Downloaded aside (removed by compressor.cleanup_orphans if the server
+            # restarts meanwhile): partial, intermediate and thumbnail files must not
+            # show up in the user's file list, only the finished file is moved there
+            work_dir = compressor.work_dir / task_id
+            work_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = work_dir
 
             if cancel and cancel.is_set():
                 raise DownloadCancelled()
 
             # Create progress hook
             def progress_hook(d):
-                for key in ("tmpfilename", "filename"):
-                    if d.get(key):
-                        partial_files.add(d[key])
                 if cancel and cancel.is_set():
                     raise DownloadCancelled()
                 if d["status"] == "downloading":
@@ -190,14 +185,15 @@ class TaskManager:
                 )
 
             if cancel and cancel.is_set():
-                partial_files.add(str(filepath))
                 raise DownloadCancelled()
 
-            if work_dir:
+            if request.has_trim:
                 task.status = TaskStatus.TRIMMING
                 task.speed = task.eta = None
                 filepath = deliver_trimmed(Path(filepath), work_dir, user_dir,
                                            request.trim_start, request.trim_end)
+            else:
+                filepath = deliver(Path(filepath), work_dir, user_dir)
 
             # Update task with completion info
             task.status = TaskStatus.COMPLETED
@@ -212,10 +208,6 @@ class TaskManager:
                 logger.info(f"Task {task_id} cancelled")
                 task.status = TaskStatus.CANCELLED
                 task.completed_at = datetime.now()
-                # Partial and already merged files in the user's directory
-                for name in partial_files:
-                    Path(name).unlink(missing_ok=True)
-                    Path(name + ".part").unlink(missing_ok=True)
             else:
                 logger.error(f"Task {task_id} failed: {e}")
                 task.status = TaskStatus.FAILED

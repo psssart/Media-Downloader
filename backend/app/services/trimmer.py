@@ -71,6 +71,29 @@ def trim_media(src: Path, dest: Path, start: Optional[float], end: Optional[floa
         raise ValueError("The trim range is outside the video.")
 
 
+def deliver(src: Path, work_dir: Path, user_dir: Path,
+            stem: Optional[str] = None, thumb_stem: Optional[str] = None) -> Path:
+    """Move a finished file from work_dir into user_dir along with its thumbnail.
+
+    The file is named "<stem><suffix>" (src's own stem by default), with " (n)"
+    appended if the name is taken, so an existing download is never overwritten.
+    The thumbnail is the image in work_dir named thumb_stem (default: src's stem).
+    """
+    thumb_stem = thumb_stem or src.stem
+    stem = stem or src.stem
+    dest = user_dir / f"{stem}{src.suffix}"
+    n = 2
+    while dest.exists():
+        dest = user_dir / f"{stem} ({n}){src.suffix}"
+        n += 1
+    os.replace(src, dest)
+    for thumb in work_dir.iterdir():
+        if thumb.stem == thumb_stem and thumb.suffix.lower() in THUMBNAIL_SUFFIXES:
+            os.replace(thumb, dest.with_suffix(thumb.suffix.lower()))
+            break
+    return dest
+
+
 def deliver_trimmed(src: Path, work_dir: Path, user_dir: Path,
                     start: Optional[float], end: Optional[float]) -> Path:
     """Trim a download from work_dir into user_dir as "<title> [<clip>]" along with its thumbnail.
@@ -80,16 +103,5 @@ def deliver_trimmed(src: Path, work_dir: Path, user_dir: Path,
     """
     trimmed = work_dir / f".trimmed{src.suffix}"
     trim_media(src, trimmed, start, end)
-
-    stem = f"{src.stem} [{clip_label(start, end)}]"
-    dest = user_dir / f"{stem}{src.suffix}"
-    n = 2
-    while dest.exists():
-        dest = user_dir / f"{stem} ({n}){src.suffix}"
-        n += 1
-    os.replace(trimmed, dest)
-    for thumb in work_dir.iterdir():
-        if thumb.stem == src.stem and thumb.suffix.lower() in THUMBNAIL_SUFFIXES:
-            os.replace(thumb, dest.with_suffix(thumb.suffix.lower()))
-            break
-    return dest
+    return deliver(trimmed, work_dir, user_dir,
+                   stem=f"{src.stem} [{clip_label(start, end)}]", thumb_stem=src.stem)
