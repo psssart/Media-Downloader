@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
     # Download settings
     max_concurrent_downloads: int = 3
     default_format: str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+    # Parallel fragment downloads for HLS/DASH streams (yt-dlp -N)
+    concurrent_fragment_downloads: int = 1
 
     # Cookie file path
     cookies_file: Optional[Path] = None
@@ -47,7 +51,7 @@ class Settings(BaseSettings):
     compression_decode_factors: Dict[str, float] = {
         "h264": 0.15, "vp8": 0.25, "vp9": 0.3, "hevc": 0.35, "av1": 0.6, "default": 0.4,
     }
-    compression_cpu_cores: int = 1
+    compression_cpu_cores: int = 1  # 0 = all cores available to the container
     compression_max_concurrent_jobs: Optional[int] = None  # default: cpu_cores
     compression_threads: Optional[int] = None  # ffmpeg -threads per job; default: cores / jobs
     compression_safety_factor: float = 1.75
@@ -79,14 +83,23 @@ class Settings(BaseSettings):
     compression_ram_wait_sec: int = 120  # how long a job waits for free RAM before failing
 
     @property
+    def compression_cores(self) -> int:
+        if self.compression_cpu_cores > 0:
+            return self.compression_cpu_cores
+        try:
+            return max(1, len(os.sched_getaffinity(0)))
+        except AttributeError:
+            return max(1, os.cpu_count() or 1)
+
+    @property
     def compression_concurrency(self) -> int:
-        return max(1, self.compression_max_concurrent_jobs or self.compression_cpu_cores)
+        return max(1, self.compression_max_concurrent_jobs or self.compression_cores)
 
     @property
     def compression_ffmpeg_threads(self) -> int:
         if self.compression_threads:
             return self.compression_threads
-        return max(1, self.compression_cpu_cores // self.compression_concurrency)
+        return max(1, self.compression_cores // self.compression_concurrency)
 
     @property
     def compression_work_dir(self) -> Path:

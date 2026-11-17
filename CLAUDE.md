@@ -10,7 +10,7 @@ Media Downloader is a self-hosted web app for downloading video/audio from 1000+
 
 ### Docker (preferred)
 ```bash
-docker compose up -d                              # Dev mode with hot reload (port 5000)
+docker compose up -d                              # Dev mode with hot reload (port 5000), no 1-vCPU limits
 docker compose -f docker-compose.prod.yml up -d   # Production (port 8080)
 ```
 
@@ -96,4 +96,5 @@ All prefixed with `MD_`, loaded from `.env`:
 - `MD_CLEANUP_INTERVAL_MINUTES` (default: 10)
 - `MD_MAX_CONCURRENT_DOWNLOADS` (default: 3)
 - `MD_DEBUG` (default: false)
+- `MD_CONCURRENT_FRAGMENT_DOWNLOADS` (default: 1) — yt-dlp parallel HLS/DASH fragments
 - `MD_COMPRESSION_*` — video compression limits and cost model, see README "Video compression"

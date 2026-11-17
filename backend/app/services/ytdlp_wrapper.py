@@ -56,6 +56,7 @@ class YTDLPWrapper:
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
+            "concurrent_fragment_downloads": settings.concurrent_fragment_downloads,
         }
 
         # Add cookies if file exists

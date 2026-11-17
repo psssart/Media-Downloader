@@ -174,7 +174,7 @@ startup. Tasks (and the queue) are in memory and don't survive a restart.
 | `ENCODER` | libx264 | Only libx264 is implemented |
 | `PRESET` / `UPGRADE_PRESET` | veryfast / faster | Base x264 preset; upgrade used only when it still passes admission (empty = off) |
 | `ALLOWED_PRESETS` | ultrafast,superfast,veryfast,faster | Presets a request may ask for |
-| `CPU_CORES` | 1 | Cores available for encoding |
+| `CPU_CORES` | 1 | Cores available for encoding; `0` = all cores the container sees |
 | `MAX_CONCURRENT_JOBS` | = CPU_CORES | Simultaneous encodes |
 | `THREADS` | CPU_CORES / jobs | ffmpeg threads per encode |
 | `SAFETY_FACTOR` | 1.75 | Multiplier on every estimate in admission |
@@ -200,6 +200,11 @@ startup. Tasks (and the queue) are in memory and don't survive a restart.
 Target sizes are decimal MB (1 MB = 1,000,000 bytes), the stricter reading of platform limits.
 
 ### Fitting other hardware
+
+- **Local machine:** `docker compose up` (dev) already lifts the production limits:
+  all cores, long/4K inputs, generous queue and wait limits, 8 parallel downloads
+  and 8 parallel HLS/DASH fragments (`MD_CONCURRENT_FRAGMENT_DOWNLOADS`).
+  Override any of them in a `.env` next to `docker-compose.yml`.
 
 - **More cores:** set `CPU_CORES`. That gives one single-threaded encode per core,
   which is the most efficient use of x264 for throughput. For lower latency
